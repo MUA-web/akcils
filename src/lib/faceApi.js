@@ -50,7 +50,7 @@ export async function loadModels() {
 
     // Download missing weight files automatically (first run)
     const manifests = [
-      'ssd_mobilenet_v1_model-weights_manifest.json',
+      'ssd_mobilenetv1_model-weights_manifest.json',
       'face_landmark_68_model-weights_manifest.json',
       'face_recognition_model-weights_manifest.json'
     ];
