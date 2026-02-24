@@ -48,21 +48,25 @@ export async function loadModels() {
   await faceapi.tf.ready();
 
   // Download missing weight files automatically (first run)
-  await ensureModelFiles('tiny_face_detector_model-weights_manifest.json');
-  await ensureModelFiles('face_landmark_68_tiny_model-weights_manifest.json');
+  await ensureModelFiles('ssd_mobilenet_v1_model-weights_manifest.json');
+  await ensureModelFiles('face_landmark_68_model-weights_manifest.json');
   await ensureModelFiles('face_recognition_model-weights_manifest.json');
 
-  await faceapi.nets.tinyFaceDetector.loadFromDisk(PATHS.MODELS_DIR);
-  await faceapi.nets.faceLandmark68TinyNet.loadFromDisk(PATHS.MODELS_DIR);
+  await faceapi.nets.ssdMobilenetv1.loadFromDisk(PATHS.MODELS_DIR);
+  await faceapi.nets.faceLandmark68Net.loadFromDisk(PATHS.MODELS_DIR);
   await faceapi.nets.faceRecognitionNet.loadFromDisk(PATHS.MODELS_DIR);
   console.log('✅ Models loaded.');
 }
 
 export async function detectFace(img) {
-  return faceapi
-    .detectAllFaces(img, new faceapi.TinyFaceDetectorOptions())
-    .withFaceLandmarks(true)
+  console.log(`🔍 Detecting face in image: ${img.width}x${img.height}`);
+  const detections = await faceapi
+    .detectAllFaces(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+    .withFaceLandmarks()
     .withFaceDescriptors();
+
+  console.log(`📊 Found ${detections.length} face(s).`);
+  return detections;
 }
 
 export { faceapi, loadImage };
