@@ -1,0 +1,69 @@
+import * as canvas from 'canvas';
+import { createRequire } from 'module';
+import fs from 'fs';
+import path from 'path';
+import { PATHS } from '../config/paths.js';
+
+// Canvas & CJS require shim
+const { Canvas, Image, ImageData, loadImage, createCanvas } = canvas;
+const require = createRequire(import.meta.url);
+const faceapi = require('@vladmandic/face-api/dist/face-api.node-wasm.js');
+
+// Patch face-api to use node-canvas
+faceapi.env.monkeyPatch({ Canvas, Image, ImageData, createCanvas, loadImage });
+
+async function ensureModelFiles(manifestFile) {
+  if (!fs.existsSync(PATHS.MODELS_DIR)) {
+    fs.mkdirSync(PATHS.MODELS_DIR, { recursive: true });
+  }
+
+  const manifestPath = path.join(PATHS.MODELS_DIR, manifestFile);
+  if (!fs.existsSync(manifestPath)) {
+    const res = await fetch(`${PATHS.MODEL_BASE_URL}${manifestFile}`);
+    if (!res.ok) {
+      throw new Error(`Failed to download ${manifestFile}: ${res.status} ${res.statusText}`);
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    fs.writeFileSync(manifestPath, buf);
+  }
+
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const paths = manifest.flatMap(m => m?.paths || []);
+
+  for (const p of paths) {
+    const filePath = path.join(PATHS.MODELS_DIR, p);
+    if (fs.existsSync(filePath)) continue;
+
+    const res = await fetch(`${PATHS.MODEL_BASE_URL}${p}`);
+    if (!res.ok) {
+      throw new Error(`Failed to download ${p}: ${res.status} ${res.statusText}`);
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    fs.writeFileSync(filePath, buf);
+  }
+}
+
+export async function loadModels() {
+  console.log('⏳ Loading face-api models...');
+  await faceapi.tf.ready();
+
+  // Download missing weight files automatically (first run)
+  await ensureModelFiles('tiny_face_detector_model-weights_manifest.json');
+  await ensureModelFiles('face_landmark_68_tiny_model-weights_manifest.json');
+  await ensureModelFiles('face_recognition_model-weights_manifest.json');
+
+  await faceapi.nets.tinyFaceDetector.loadFromDisk(PATHS.MODELS_DIR);
+  await faceapi.nets.faceLandmark68TinyNet.loadFromDisk(PATHS.MODELS_DIR);
+  await faceapi.nets.faceRecognitionNet.loadFromDisk(PATHS.MODELS_DIR);
+  console.log('✅ Models loaded.');
+}
+
+export async function detectFace(img) {
+  return faceapi
+    .detectAllFaces(img, new faceapi.TinyFaceDetectorOptions())
+    .withFaceLandmarks(true)
+    .withFaceDescriptors();
+}
+
+export { faceapi, loadImage };
+

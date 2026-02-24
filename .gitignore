@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# Expo/React Native
+.expo/
+dist/
+web-build/
+
+# Local DB and models (Render/Cloud shouldn't have these files)
+database/*.json
+models/*.json
+models/*.bin
+uploads/
+
+# OS files
+.DS_Store
+Thumbs.db
