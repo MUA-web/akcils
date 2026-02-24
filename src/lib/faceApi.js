@@ -44,18 +44,33 @@ async function ensureModelFiles(manifestFile) {
 }
 
 export async function loadModels() {
-  console.log('⏳ Loading face-api models...');
-  await faceapi.tf.ready();
+  try {
+    console.log('⏳ Loading face-api models...');
+    await faceapi.tf.ready();
 
-  // Download missing weight files automatically (first run)
-  await ensureModelFiles('ssd_mobilenet_v1_model-weights_manifest.json');
-  await ensureModelFiles('face_landmark_68_model-weights_manifest.json');
-  await ensureModelFiles('face_recognition_model-weights_manifest.json');
+    // Download missing weight files automatically (first run)
+    const manifests = [
+      'ssd_mobilenet_v1_model-weights_manifest.json',
+      'face_landmark_68_model-weights_manifest.json',
+      'face_recognition_model-weights_manifest.json'
+    ];
 
-  await faceapi.nets.ssdMobilenetv1.loadFromDisk(PATHS.MODELS_DIR);
-  await faceapi.nets.faceLandmark68Net.loadFromDisk(PATHS.MODELS_DIR);
-  await faceapi.nets.faceRecognitionNet.loadFromDisk(PATHS.MODELS_DIR);
-  console.log('✅ Models loaded.');
+    for (const m of manifests) {
+      console.log(`📥 Ensuring model: ${m}`);
+      await ensureModelFiles(m);
+    }
+
+    console.log('📂 Loading from disk:', PATHS.MODELS_DIR);
+    await faceapi.nets.ssdMobilenetv1.loadFromDisk(PATHS.MODELS_DIR);
+    await faceapi.nets.faceLandmark68Net.loadFromDisk(PATHS.MODELS_DIR);
+    await faceapi.nets.faceRecognitionNet.loadFromDisk(PATHS.MODELS_DIR);
+
+    console.log('✅ Models loaded successfully.');
+  } catch (err) {
+    console.error('❌ CRITICAL ERROR during model loading:', err);
+    // Rethrow to allow server startup to fail visibly
+    throw err;
+  }
 }
 
 export async function detectFace(img) {
