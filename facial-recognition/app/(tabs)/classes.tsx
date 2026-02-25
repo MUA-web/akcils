@@ -15,9 +15,40 @@ export default function AttendanceCameraScreen() {
 
     const [isLoading, setIsLoading] = useState(false);
     const [successMatch, setSuccessMatch] = useState<any>(null);
+    const [courses, setCourses] = useState<any[]>([]);
+    const [selectedCourse, setSelectedCourse] = useState<any>(null);
+    const [courseModal, setCourseModal] = useState(false);
+    const [isFetchingCourses, setIsFetchingCourses] = useState(false);
 
     const cameraRef = useRef<CameraView>(null);
     const scanAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        fetchTodayCourses();
+    }, []);
+
+    const fetchTodayCourses = async () => {
+        setIsFetchingCourses(true);
+        try {
+            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            const todayName = days[new Date().getDay()];
+
+            const { data, error } = await supabase
+                .from('courses')
+                .select('*')
+                .eq('session_day', todayName);
+
+            if (error) throw error;
+            setCourses(data || []);
+            if (data && data.length > 0) {
+                setSelectedCourse(data[0]);
+            }
+        } catch (error) {
+            console.error('Error fetching courses:', error);
+        } finally {
+            setIsFetchingCourses(false);
+        }
+    };
 
     useEffect(() => {
         if (isLoading) {
@@ -83,6 +114,12 @@ export default function AttendanceCameraScreen() {
             const type = matchFormat ? `image/${matchFormat[1]}` : `image`;
 
             formData.append('image', { uri: photo.uri, name: filename, type } as any);
+
+            if (selectedCourse) {
+                formData.append('course_code', selectedCourse.code);
+                formData.append('department', selectedCourse.department_id); // Or fetch name if needed
+                formData.append('level', selectedCourse.level_id);
+            }
 
             console.log('🚀 Attempting fetch to:', `${apiUrl}/recognize`);
             const response = await fetch(`${apiUrl}/recognize`, {
@@ -173,6 +210,22 @@ export default function AttendanceCameraScreen() {
                 <View style={styles.instructionBadge}>
                     <View style={styles.instructionDot} />
                     <Text style={styles.instructionText}>Align face inside the frame</Text>
+                </View>
+
+                {/* Course Selector */}
+                <View style={styles.courseSelectorContainer}>
+                    <TouchableOpacity
+                        style={styles.courseSelector}
+                        onPress={() => setCourseModal(true)}
+                    >
+                        <View style={styles.courseInfoShort}>
+                            <Text style={styles.courseSelectorLabel}>Marking Attendance For:</Text>
+                            <Text style={styles.courseSelectorValue}>
+                                {selectedCourse ? `${selectedCourse.code} - ${selectedCourse.name}` : 'Select Course'}
+                            </Text>
+                        </View>
+                        <Ionicons name="chevron-down" size={20} color="#FFF" />
+                    </TouchableOpacity>
                 </View>
 
                 {/* Frame Container */}
@@ -570,5 +623,124 @@ const styles = StyleSheet.create({
         backgroundColor: '#F1F5F9',
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    courseSelectorContainer: {
+        position: 'absolute',
+        top: 130,
+        left: 24,
+        right: 24,
+        zIndex: 10,
+    },
+    courseSelector: {
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        borderRadius: 16,
+        padding: 16,
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
+    },
+    courseInfoShort: {
+        flex: 1,
+    },
+    courseSelectorLabel: {
+        color: 'rgba(255,255,255,0.6)',
+        fontSize: 11,
+        fontWeight: '700',
+        textTransform: 'uppercase',
+        marginBottom: 4,
+    },
+    courseSelectorValue: {
+        color: '#FFF',
+        fontSize: 15,
+        fontWeight: '700',
+    },
+    modalOverlayDark: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        justifyContent: 'flex-end',
+    },
+    coursesModalContent: {
+        backgroundColor: '#FFF',
+        borderTopLeftRadius: 32,
+        borderTopRightRadius: 32,
+        padding: 24,
+    },
+    modalHeader: {
+        marginBottom: 20,
+    },
+    modalPageTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: '#0F172A',
+    },
+    modalSubtitle: {
+        fontSize: 14,
+        color: '#64748B',
+        marginTop: 4,
+    },
+    courseOption: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        borderRadius: 16,
+        backgroundColor: '#F8FAFC',
+        marginBottom: 12,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+    },
+    selectedCourseOption: {
+        borderColor: Colors.primary,
+        backgroundColor: Colors.primary + '05',
+    },
+    courseOptionMain: {
+        flex: 1,
+    },
+    courseOptionCode: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: Colors.primary,
+        marginBottom: 2,
+    },
+    courseOptionName: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#1E293B',
+    },
+    courseOptionTime: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#64748B',
+    },
+    emptyCoursesState: {
+        alignItems: 'center',
+        paddingVertical: 40,
+    },
+    emptyCoursesText: {
+        fontSize: 16,
+        color: '#64748B',
+        fontWeight: '600',
+        marginTop: 12,
+        marginBottom: 20,
+    },
+    showAllBtn: {
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+        backgroundColor: '#F1F5F9',
+        borderRadius: 12,
+    },
+    showAllText: {
+        color: '#0F172A',
+        fontWeight: '700',
+    },
+    closeModalBtn: {
+        marginTop: 12,
+        paddingVertical: 16,
+        alignItems: 'center',
+    },
+    closeModalBtnText: {
+        color: '#64748B',
+        fontSize: 16,
+        fontWeight: '700',
     },
 });
