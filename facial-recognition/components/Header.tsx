@@ -8,28 +8,38 @@ interface HeaderProps {
     date: string;
     avatarUrl?: string;
     onNotificationPress?: () => void;
+    light?: boolean;
 }
 
-export default function Header({ userName, date, avatarUrl, onNotificationPress }: HeaderProps) {
+export default function Header({ userName, date, avatarUrl, onNotificationPress, light }: HeaderProps) {
+    const textColor = light ? '#FFF' : '#0A192F';
+    const subTextColor = light ? 'rgba(255,255,255,0.7)' : Colors.textSecondary;
+
     return (
         <View style={styles.container}>
             <View style={styles.leftSection}>
-                <View style={styles.avatarContainer}>
+                <View style={[styles.avatarContainer, light && { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
                     {avatarUrl ? (
                         <Image source={{ uri: avatarUrl }} style={styles.avatar} />
                     ) : (
-                        <Ionicons name="person" size={24} color={Colors.textSecondary} />
+                        <Ionicons name="person" size={24} color={light ? '#FFF' : Colors.textSecondary} />
                     )}
                 </View>
                 <View style={styles.textContainer}>
-                    <Text style={styles.greeting}>Good Morning, {userName}</Text>
-                    <Text style={styles.date}>{date}</Text>
+                    <Text style={[styles.greeting, { color: textColor }]}>Hello, {userName} 👋</Text>
+                    <Text style={[styles.date, { color: subTextColor }]}>{date}</Text>
                 </View>
             </View>
 
-            <TouchableOpacity onPress={onNotificationPress} style={styles.notificationBtn}>
-                <Ionicons name="notifications" size={22} color={Colors.text} />
-                <View style={styles.badge} />
+            <TouchableOpacity
+                onPress={onNotificationPress}
+                style={[
+                    styles.notificationBtn,
+                    light && { backgroundColor: 'rgba(255,255,255,0.15)', borderColor: 'rgba(255,255,255,0.2)' }
+                ]}
+            >
+                <Ionicons name="notifications" size={22} color={light ? '#FFF' : Colors.text} />
+                <View style={[styles.badge, light && { borderColor: Colors.primary }]} />
             </TouchableOpacity>
         </View>
     );
@@ -56,6 +66,8 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         overflow: 'hidden',
         marginRight: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
     },
     avatar: {
         width: '100%',
@@ -66,15 +78,13 @@ const styles = StyleSheet.create({
         paddingRight: 10,
     },
     greeting: {
-        fontSize: 22,
+        fontSize: 18,
         fontWeight: '800',
-        color: '#0A192F', // very dark blue
     },
     date: {
-        fontSize: 14,
-        color: Colors.textSecondary,
+        fontSize: 13,
         fontWeight: '500',
-        marginTop: 4,
+        marginTop: 2,
     },
     notificationBtn: {
         width: 48,
@@ -83,7 +93,7 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.card,
         justifyContent: 'center',
         alignItems: 'center',
-        shadowColor: Colors.primary,
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.05,
         shadowRadius: 8,
@@ -98,7 +108,7 @@ const styles = StyleSheet.create({
         width: 10,
         height: 10,
         borderRadius: 5,
-        backgroundColor: Colors.danger,
+        backgroundColor: '#F87171', // soft red
         borderWidth: 2,
         borderColor: Colors.card,
     },

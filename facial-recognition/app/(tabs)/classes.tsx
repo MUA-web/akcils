@@ -1,5 +1,5 @@
-import React, { useRef, useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View, Dimensions, Image } from 'react-native';
+import React, { useRef, useState, useEffect } from 'react';
+import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View, Dimensions, Image, Animated, Easing } from 'react-native';
 import { CameraView, useCameraPermissions, CameraType, FlashMode } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Colors';
@@ -17,6 +17,27 @@ export default function AttendanceCameraScreen() {
     const [successMatch, setSuccessMatch] = useState<any>(null);
 
     const cameraRef = useRef<CameraView>(null);
+    const scanAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        if (isLoading) {
+            Animated.loop(
+                Animated.timing(scanAnim, {
+                    toValue: 1,
+                    duration: 2000,
+                    easing: Easing.linear,
+                    useNativeDriver: true,
+                })
+            ).start();
+        } else {
+            scanAnim.setValue(0);
+        }
+    }, [isLoading]);
+
+    const spin = scanAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['0deg', '360deg'],
+    });
 
     if (!permission) {
         return <View style={styles.container} />;
@@ -63,10 +84,12 @@ export default function AttendanceCameraScreen() {
 
             formData.append('image', { uri: photo.uri, name: filename, type } as any);
 
+            console.log('🚀 Attempting fetch to:', `${apiUrl}/recognize`);
             const response = await fetch(`${apiUrl}/recognize`, {
                 method: 'POST',
                 body: formData,
             });
+            console.log('✅ Response status:', response.status);
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
@@ -94,8 +117,14 @@ export default function AttendanceCameraScreen() {
                 .single();
 
             if (fetchError || !matchedStudent) {
-                // If the user was registered via the backend, they will be in the faces table!
-                throw new Error('Matched student details not found in database.');
+                // FALLBACK: If not in 'faces' table, maybe it's just the label
+                setSuccessMatch({
+                    name: bestMatch.label,
+                    regNumber: 'STUDENT',
+                    level: 'Unknown',
+                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                });
+                return;
             }
 
             // Show Success Modal
@@ -148,19 +177,21 @@ export default function AttendanceCameraScreen() {
 
                 {/* Frame Container */}
                 <View style={styles.frameWrapper}>
+                    {isLoading && (
+                        <Animated.View
+                            style={[
+                                styles.scanCircle,
+                                { transform: [{ rotate: spin }] }
+                            ]}
+                        >
+                            <Ionicons name="scan-outline" size={FRAME_SIZE * 0.8} color="rgba(74, 222, 128, 0.5)" />
+                        </Animated.View>
+                    )}
                     {/* 4 Corners */}
                     <View style={[styles.corner, styles.topLeftCorner]} />
                     <View style={[styles.corner, styles.topRightCorner]} />
                     <View style={[styles.corner, styles.bottomLeftCorner]} />
                     <View style={[styles.corner, styles.bottomRightCorner]} />
-
-                    {/* Scanning Indicator inside frame (Optional) */}
-                    {isLoading && (
-                        <View style={styles.loadingOverlay}>
-                            <ActivityIndicator size="large" color="#4ADE80" />
-                            <Text style={styles.loadingText}>Analyzing Face...</Text>
-                        </View>
-                    )}
                 </View>
 
                 {/* Right Side Buttons */}
@@ -328,45 +359,59 @@ const styles = StyleSheet.create({
     },
     frameWrapper: {
         position: 'absolute',
-        top: height * 0.35,
+        top: height * 0.28,
         left: (width - FRAME_SIZE) / 2,
         width: FRAME_SIZE,
         height: FRAME_SIZE,
         justifyContent: 'center',
         alignItems: 'center',
+        borderWidth: 2,
+        borderColor: 'rgba(255,255,255,0.2)',
+        borderRadius: 24,
     },
     corner: {
         position: 'absolute',
-        width: 40,
-        height: 40,
+        width: 45,
+        height: 45,
         borderColor: '#4ADE80', // bright green
     },
+    scanCircle: {
+        position: 'absolute',
+        width: FRAME_SIZE * 0.9,
+        height: FRAME_SIZE * 0.9,
+        borderRadius: (FRAME_SIZE * 0.9) / 2,
+        borderWidth: 2,
+        borderColor: 'rgba(74, 222, 128, 0.3)',
+        borderStyle: 'dashed',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
     topLeftCorner: {
-        top: 0,
-        left: 0,
-        borderTopWidth: 4,
-        borderLeftWidth: 4,
+        top: -6,
+        left: -6,
+        borderTopWidth: 6,
+        borderLeftWidth: 6,
         borderTopLeftRadius: 24,
     },
     topRightCorner: {
-        top: 0,
-        right: 0,
-        borderTopWidth: 4,
-        borderRightWidth: 4,
+        top: -6,
+        right: -6,
+        borderTopWidth: 6,
+        borderRightWidth: 6,
         borderTopRightRadius: 24,
     },
     bottomLeftCorner: {
-        bottom: 0,
-        left: 0,
-        borderBottomWidth: 4,
-        borderLeftWidth: 4,
+        bottom: -6,
+        left: -6,
+        borderBottomWidth: 6,
+        borderLeftWidth: 6,
         borderBottomLeftRadius: 24,
     },
     bottomRightCorner: {
-        bottom: 0,
-        right: 0,
-        borderBottomWidth: 4,
-        borderRightWidth: 4,
+        bottom: -6,
+        right: -6,
+        borderBottomWidth: 6,
+        borderRightWidth: 6,
         borderBottomRightRadius: 24,
     },
     loadingOverlay: {

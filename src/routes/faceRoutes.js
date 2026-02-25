@@ -101,6 +101,8 @@ router.post('/recognize', upload.single('image'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Image is required' });
 
+    const { course_code, department, level } = req.body;
+
     const { data: faces, error: fetchError } = await supabase
       .from('faces')
       .select('name, descriptor');
@@ -130,7 +132,10 @@ router.post('/recognize', upload.single('image'), async (req, res) => {
       if (match.label !== 'unknown') {
         attendanceLogs.push({
           name: match.label,
-          date: today()
+          date: today(),
+          course_code: course_code || null,
+          department: department || null,
+          level: level || null
         });
       }
     }
