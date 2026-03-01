@@ -7,7 +7,7 @@ node_modules/
 .env.*.local
 
 # Expo/React Native
-facial-recognition/
+# facial-recognition/ - DO NOT IGNORE (Needed for EAS Build)
 .expo/
 dist/
 web-build/

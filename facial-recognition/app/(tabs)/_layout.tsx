@@ -14,7 +14,12 @@ export default function TabLayout() {
                 tabBarActiveTintColor: Colors.primary,
                 tabBarInactiveTintColor: Colors.textSecondary,
                 tabBarStyle: {
-                    display: 'none',
+                    display: 'flex',
+                    borderTopWidth: 1,
+                    borderTopColor: '#F1F5F9',
+                    height: 65,
+                    paddingBottom: 10,
+                    paddingTop: 10,
                 },
                 tabBarLabelStyle: {
                     fontSize: 10,
@@ -26,9 +31,30 @@ export default function TabLayout() {
             <ExpoTabs.Screen
                 name="index"
                 options={{
+                    headerShown: false,
                     title: 'Dashboard',
                     tabBarIcon: ({ color }) => (
-                        <Ionicons name="grid" size={24} color={color} />
+                        <Ionicons name="home" size={24} color={color} />
+                    ),
+                }}
+            />
+
+            <ExpoTabs.Screen
+                name="register"
+                options={{
+                    title: 'Attendance',
+                    tabBarIcon: ({ color }) => (
+                        <Ionicons name="finger-print" size={24} color={color} />
+                    ),
+                }}
+            />
+
+            <ExpoTabs.Screen
+                name="classes"
+                options={{
+                    title: 'Assign Course',
+                    tabBarIcon: ({ color }) => (
+                        <Ionicons name="book" size={24} color={color} />
                     ),
                 }}
             />
@@ -37,54 +63,18 @@ export default function TabLayout() {
                 name="history"
                 options={{
                     href: null,
-                    title: 'History',
-                    tabBarIcon: ({ color }) => (
-                        <Ionicons name="time" size={24} color={color} />
-                    ),
-                }}
-            />
-
-            {/* Center Tab for Enrollment */}
-            <ExpoTabs.Screen
-                name="register"
-                listeners={({ navigation }) => ({
-                    tabPress: (e) => {
-                        e.preventDefault();
-                        navigation.navigate('register');
-                    },
-                })}
-                options={{
-                    tabBarLabel: () => null,
-                    tabBarIcon: () => (
-                        <View style={styles.fabContainer}>
-                            <LinearGradient
-                                colors={[Colors.primary, Colors.secondary]}
-                                style={styles.fab}
-                            >
-                                <Ionicons name="add" size={32} color="#FFF" />
-                            </LinearGradient>
-                        </View>
-                    ),
-                }}
-            />
-
-            <ExpoTabs.Screen
-                name="classes"
-                options={{
-                    href: null,
-                    title: 'Attendance',
-                    tabBarIcon: ({ color }) => (
-                        <Ionicons name="camera" size={24} color={color} />
-                    ),
                 }}
             />
             <ExpoTabs.Screen
                 name="profile"
                 options={{
-                    title: 'Account',
-                    tabBarIcon: ({ color }) => (
-                        <Ionicons name="person" size={24} color={color} />
-                    ),
+                    href: null,
+                }}
+            />
+            <ExpoTabs.Screen
+                name="notifications"
+                options={{
+                    href: null,
                 }}
             />
         </ExpoTabs>

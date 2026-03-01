@@ -51,7 +51,7 @@ export default function SplashScreen() {
         <View style={styles.container}>
             <StatusBar barStyle="light-content" />
             <LinearGradient
-                colors={['#4F46E5', '#7C3AED', '#C026D3']}
+                colors={['#1E40AF', '#2563EB', '#3B82F6']}
                 style={styles.gradient}
             >
                 <Animated.View style={[
@@ -59,9 +59,9 @@ export default function SplashScreen() {
                     { opacity: fadeAnim, transform: [{ scale: scaleAnim }] }
                 ]}>
                     <View style={styles.logoBackground}>
-                        <Ionicons name="scan" size={80} color="#FFF" />
+                        <Ionicons name="shield-checkmark" size={80} color="#FFF" />
                     </View>
-                    <Text style={styles.title}>FaceAuth</Text>
+                    <Text style={styles.title}>MBSARARI</Text>
                     <Text style={styles.subtitle}>Smart Attendance System</Text>
                 </Animated.View>
 

@@ -105,7 +105,7 @@ router.post('/recognize', upload.single('image'), async (req, res) => {
 
     const { data: faces, error: fetchError } = await supabase
       .from('faces')
-      .select('name, descriptor');
+      .select('name, registration_number, department, level, descriptor');
 
     if (fetchError) throw new Error(fetchError.message);
 
@@ -121,23 +121,40 @@ router.post('/recognize', upload.single('image'), async (req, res) => {
     }
 
     const labeledDescriptors = faces.map(
-      f => new faceapi.LabeledFaceDescriptors(f.name, [new Float32Array(f.descriptor)]),
+      f => new faceapi.LabeledFaceDescriptors(f.registration_number, [new Float32Array(f.descriptor)]),
     );
-    const matcher = new faceapi.FaceMatcher(labeledDescriptors, 0.5);
+    const matcher = new faceapi.FaceMatcher(labeledDescriptors, 0.45); // Standardized threshold
+    const results = [];
     const attendanceLogs = [];
+
     for (const detection of detections) {
       const match = matcher.findBestMatch(detection.descriptor);
-      results.push({ label: match.label, distance: parseFloat(match.distance.toFixed(4)) });
 
-      if (match.label !== 'unknown') {
-        attendanceLogs.push({
-          name: match.label,
-          date: today(),
-          course_code: course_code || null,
-          department: department || null,
-          level: level || null
-        });
+      if (match.label === 'unknown') {
+        results.push({ recognized: false, label: 'Unknown Visitor' });
+        continue;
       }
+
+      // Find the full student record for this registration number
+      const student = faces.find(f => f.registration_number === match.label);
+      if (!student) continue;
+
+      results.push({
+        recognized: true,
+        name: student.name,
+        registration_number: student.registration_number,
+        department: student.department,
+        level: student.level,
+        distance: parseFloat(match.distance.toFixed(4))
+      });
+
+      attendanceLogs.push({
+        name: student.name,
+        date: today(),
+        course_code: course_code || null,
+        department: student.department || department || null,
+        level: student.level || level || null
+      });
     }
 
     if (attendanceLogs.length > 0) {

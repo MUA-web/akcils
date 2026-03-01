@@ -50,8 +50,8 @@ export async function loadModels() {
 
     // Tiny models are much lighter than SSD/Full counterparts
     const manifests = [
-      'tiny_face_detector_model-weights_manifest.json',
-      'face_landmark_68_tiny_model-weights_manifest.json',
+      'ssd_mobilenetv1_model-weights_manifest.json', // More accurate than tiny
+      'face_landmark_68_model-weights_manifest.json',
       'face_recognition_model-weights_manifest.json'
     ];
 
@@ -61,8 +61,8 @@ export async function loadModels() {
     }
 
     console.log('📂 Loading from disk:', PATHS.MODELS_DIR);
-    await faceapi.nets.tinyFaceDetector.loadFromDisk(PATHS.MODELS_DIR);
-    await faceapi.nets.faceLandmark68TinyNet.loadFromDisk(PATHS.MODELS_DIR);
+    await faceapi.nets.ssdMobilenetv1.loadFromDisk(PATHS.MODELS_DIR);
+    await faceapi.nets.faceLandmark68Net.loadFromDisk(PATHS.MODELS_DIR);
     await faceapi.nets.faceRecognitionNet.loadFromDisk(PATHS.MODELS_DIR);
 
     console.log('✅ Models loaded (Memory-Optimized).');
@@ -75,10 +75,9 @@ export async function loadModels() {
 export async function detectFace(img) {
   console.log(`🔍 Detecting face (Optimized): ${img.width}x${img.height}`);
 
-  // inputSize: 320 to stay well within 512MB RAM
-  const options = new faceapi.TinyFaceDetectorOptions({
-    inputSize: 320,
-    scoreThreshold: 0.5
+  // SSD options - much better at detecting faces than Tiny
+  const options = new faceapi.SsdMobilenetv1Options({
+    minConfidence: 0.4
   });
 
   const detections = await faceapi

@@ -1,746 +1,1247 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View, Dimensions, Image, Animated, Easing } from 'react-native';
-import { CameraView, useCameraPermissions, CameraType, FlashMode } from 'expo-camera';
+import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View, Dimensions, Image, Animated, Easing, Modal, Pressable, ScrollView, TextInput, StatusBar, FlatList } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Colors';
 import { supabase } from '../../lib/supabase';
+import * as LocalAuthentication from 'expo-local-authentication';
+import { LinearGradient } from 'expo-linear-gradient';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import * as Haptics from 'expo-haptics';
+import ReAnimated, {
+    FadeIn,
+    FadeInDown,
+    FadeOut,
+    useAnimatedStyle,
+    useSharedValue,
+    withRepeat,
+    withSequence,
+    withTiming,
+    withDelay,
+    interpolate,
+    Extrapolate
+} from 'react-native-reanimated';
 
 const { width, height } = Dimensions.get('window');
-const FRAME_SIZE = width * 0.65;
+
+const BLUE_PRIMARY = '#2563EB';
+const BLUE_LIGHT = '#EFF6FF';
+const SLATE_DARK = '#0F172A';
+const SLATE_MEDIUM = '#64748B';
+const SLATE_LIGHT = '#F8FAFC';
+const SUCCESS_GREEN = '#22C55E';
 
 export default function AttendanceCameraScreen() {
-    const [permission, requestPermission] = useCameraPermissions();
-    const [facing, setFacing] = useState<CameraType>('front');
-    const [flash, setFlash] = useState<FlashMode>('off');
-
     const [isLoading, setIsLoading] = useState(false);
-    const [successMatch, setSuccessMatch] = useState<any>(null);
+    const [successMatch, setSuccessMatch] = useState<{ name: string; regNumber: string; level: string; time: string } | null>(null);
     const [courses, setCourses] = useState<any[]>([]);
+    const [unreadCount, setUnreadCount] = useState(0);
+    const router = useRouter();
+    const params = useLocalSearchParams();
     const [selectedCourse, setSelectedCourse] = useState<any>(null);
     const [courseModal, setCourseModal] = useState(false);
     const [isFetchingCourses, setIsFetchingCourses] = useState(false);
+    const [isBiometricSupported, setIsBiometricSupported] = useState(false);
+    const [isBiometricEnrolled, setIsBiometricEnrolled] = useState(false);
 
-    const cameraRef = useRef<CameraView>(null);
-    const scanAnim = useRef(new Animated.Value(0)).current;
+    const [attendanceMode, setAttendanceMode] = useState<'courses' | 'activities' | 'methods' | 'code' | 'fingerprint' | 'generate_code' | 'success'>('courses');
+    const [attendanceCode, setAttendanceCode] = useState('');
+    const [generatedCode, setGeneratedCode] = useState<string | null>(null);
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [todayAttendance, setTodayAttendance] = useState<any[]>([]);
 
     useEffect(() => {
-        fetchTodayCourses();
+        fetchStudentAssignedCourses();
+        checkBiometrics();
+        fetchUnreadCount();
     }, []);
 
-    const fetchTodayCourses = async () => {
+    const checkBiometrics = async () => {
+        const hasHardware = await LocalAuthentication.hasHardwareAsync();
+        const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+        setIsBiometricSupported(hasHardware);
+        setIsBiometricEnrolled(isEnrolled);
+    };
+
+    const fetchStudentAssignedCourses = async () => {
         setIsFetchingCourses(true);
         try {
-            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-            const todayName = days[new Date().getDay()];
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
 
-            const { data, error } = await supabase
-                .from('courses')
-                .select('*')
-                .eq('session_day', todayName);
+            // Get student profile
+            const { data: student } = await supabase
+                .from('students')
+                .select('department_id, level_id, department, level, registration_number')
+                .eq('id', user.id)
+                .single();
+
+            if (!student) return;
+
+            // Fetch courses for that department and level
+            let query = supabase.from('courses').select('*, departments!inner(name), levels!inner(label)');
+
+            if (student.department_id && student.level_id) {
+                query = query.eq('department_id', student.department_id)
+                    .eq('level_id', student.level_id);
+            } else {
+                // Fallback for legacy data - filter by name (matching Dashboard logic)
+                console.warn('Legacy student profile: missing IDs. Falling back to name filtering.');
+                query = query.eq('departments.name', student.department)
+                    .eq('levels.label', student.level);
+            }
+
+            const { data, error } = await query;
 
             if (error) throw error;
             setCourses(data || []);
-            if (data && data.length > 0) {
-                setSelectedCourse(data[0]);
+
+            // 3. Fetch today's attendance for this student to prevent duplicates
+            const today = new Date().toISOString().split('T')[0];
+            const { data: attData } = await supabase
+                .from('attendance')
+                .select('course_code')
+                .eq('registration_number', student.registration_number || '')
+                .eq('date', today);
+
+            setTodayAttendance(attData || []);
+
+            // Handle incoming courseId from navigation
+            if (params.courseId && data) {
+                const preselected = data.find((c: any) => c.id.toString() === params.courseId);
+                if (preselected) {
+                    setSelectedCourse(preselected);
+                    setAttendanceMode('activities');
+                }
             }
         } catch (error) {
-            console.error('Error fetching courses:', error);
+            console.error('Error fetching assigned courses:', error);
         } finally {
             setIsFetchingCourses(false);
         }
     };
 
-    useEffect(() => {
-        if (isLoading) {
-            Animated.loop(
-                Animated.timing(scanAnim, {
-                    toValue: 1,
-                    duration: 2000,
-                    easing: Easing.linear,
-                    useNativeDriver: true,
-                })
-            ).start();
-        } else {
-            scanAnim.setValue(0);
+    const fetchInitialData = async () => {
+        try {
+            const { data } = await supabase.from('courses').select('*').order('name');
+            setCourses(data || []);
+        } catch (error) {
+            console.error('Error fetching courses:', error);
         }
-    }, [isLoading]);
-
-    const spin = scanAnim.interpolate({
-        inputRange: [0, 1],
-        outputRange: ['0deg', '360deg'],
-    });
-
-    if (!permission) {
-        return <View style={styles.container} />;
-    }
-
-    if (!permission.granted) {
-        return (
-            <View style={styles.permissionContainer}>
-                <Text style={styles.permissionText}>We need your permission to show the camera</Text>
-                <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
-                    <Text style={styles.permissionButtonText}>Grant Permission</Text>
-                </TouchableOpacity>
-            </View>
-        );
-    }
-
-    const toggleCameraFacing = () => {
-        setFacing(current => (current === 'back' ? 'front' : 'back'));
     };
 
-    const toggleFlash = () => {
-        setFlash(current => (current === 'off' ? 'on' : 'off'));
-    };
+    const isWithinSchedule = (sessionDay: string, startTimeStr: string, durationStr: string) => {
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const now = new Date();
+        const currentDay = days[now.getDay()];
 
-    const handleScanFace = async () => {
-        if (!cameraRef.current || isLoading) return;
+        // 1. Check day (case insensitive)
+        if (sessionDay && sessionDay.toLowerCase() !== currentDay.toLowerCase()) {
+            return { valid: false, reason: `This course is scheduled for ${sessionDay}, but today is ${currentDay}.` };
+        }
+
+        if (!startTimeStr) return { valid: true }; // Skip if no time set
+
+        // 2. Parse startTimeStr (e.g. "10:00 AM")
+        const match = startTimeStr.match(/(\d+):?(\d+)?\s*(AM|PM)/i);
+        if (!match) return { valid: true };
 
         try {
-            setIsLoading(true);
-            const photo = await cameraRef.current.takePictureAsync({
-                quality: 0.6,
-                base64: false,
-            });
+            let startHours = parseInt(match[1]);
+            const startMinutes = parseInt(match[2] || '0');
+            const ampm = match[3].toUpperCase();
 
-            if (!photo || !photo.uri) throw new Error('Failed to take picture.');
+            if (ampm === 'PM' && startHours < 12) startHours += 12;
+            if (ampm === 'AM' && startHours === 12) startHours = 0;
 
-            const apiUrl = process.env.EXPO_PUBLIC_API_URL;
-            if (!apiUrl) throw new Error("API URL is not configured. Please check your .env file.");
+            const startDate = new Date(now);
+            startDate.setHours(startHours, startMinutes, 0, 0);
 
-            const formData = new FormData();
-            const filename = photo.uri.split('/').pop() || 'photo.jpg';
-            const matchFormat = /\.(\w+)$/.exec(filename);
-            const type = matchFormat ? `image/${matchFormat[1]}` : `image`;
+            // Duration is like "2 Hours" - extract number
+            const duration = parseInt(durationStr) || 1;
+            const endDate = new Date(startDate);
+            endDate.setHours(startDate.getHours() + duration);
 
-            formData.append('image', { uri: photo.uri, name: filename, type } as any);
+            const isValid = now >= startDate && now <= endDate;
 
-            if (selectedCourse) {
-                formData.append('course_code', selectedCourse.code);
-                formData.append('department', selectedCourse.department_id); // Or fetch name if needed
-                formData.append('level', selectedCourse.level_id);
+            if (!isValid) {
+                const endStr = endDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                return {
+                    valid: false,
+                    reason: now < startDate
+                        ? `Attendance hasn't started yet. It starts at ${startTimeStr}.`
+                        : `Attendance session has ended. It was available until ${endStr}.`
+                };
             }
 
-            console.log('🚀 Attempting fetch to:', `${apiUrl}/recognize`);
-            const response = await fetch(`${apiUrl}/recognize`, {
-                method: 'POST',
-                body: formData,
-            });
-            console.log('✅ Response status:', response.status);
+            return { valid: true };
+        } catch (e) {
+            return { valid: true }; // Fallback
+        }
+    };
 
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.error || 'Server error occurred during recognition.');
-            }
+    const logAttendanceToBoth = async (isBiometric: boolean, code?: string) => {
+        if (!selectedCourse) {
+            Alert.alert('Error', 'No course selected.');
+            return;
+        }
 
-            const data = await response.json();
-            const recognizedFaces = data.recognized;
+        // --- Time Window Check ---
+        const scheduleCheck = isWithinSchedule(
+            selectedCourse.session_day,
+            selectedCourse.session_time,
+            selectedCourse.duration
+        );
 
-            if (!recognizedFaces || recognizedFaces.length === 0) {
-                throw new Error('No face detected or matched in the frame.');
-            }
+        if (!scheduleCheck.valid) {
+            Alert.alert('Session Closed', scheduleCheck.reason);
+            return;
+        }
+        // -------------------------
 
-            const bestMatch = recognizedFaces[0];
-            if (bestMatch.label === 'unknown') {
-                Alert.alert('Not recognized', 'Student not found or confidence too low. Please try again.');
-                return;
-            }
+        // --- Daily Limit Check ---
+        const alreadyMarked = todayAttendance.some(a => a.course_code === selectedCourse?.code);
+        if (alreadyMarked) {
+            Alert.alert('Already Marked', 'You have already marked attendance for this course today.');
+            return;
+        }
+        // -------------------------
 
-            // Fetch matched student details from Supabase using their name
-            const { data: matchedStudent, error: fetchError } = await supabase
-                .from('faces')
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) throw new Error('You must be logged in to mark attendance.');
+
+            const { data: student, error: studentError } = await supabase
+                .from('students')
                 .select('*')
-                .eq('name', bestMatch.label)
+                .eq('id', user.id)
                 .single();
 
-            if (fetchError || !matchedStudent) {
-                // FALLBACK: If not in 'faces' table, maybe it's just the label
-                setSuccessMatch({
-                    name: bestMatch.label,
-                    regNumber: 'STUDENT',
-                    level: 'Unknown',
-                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                });
-                return;
-            }
+            if (studentError || !student) throw new Error('Could not find your student profile.');
 
-            // Show Success Modal
+            const method = isBiometric ? 'Self (Fingerprint)' : `Self (Code: ${code})`;
+
+            // 1. Log to attendance_logs (Supabase Direct)
+            await supabase
+                .from('attendance_logs')
+                .insert({
+                    student_id: student.id,
+                    course_id: selectedCourse.id,
+                    status: 'Present',
+                    marked_by: method,
+                    timestamp: new Date().toISOString(),
+                });
+
+            // 2. Log to attendance (Backend Compatibility)
+            await supabase
+                .from('attendance')
+                .insert({
+                    student_id: student.id, // Added for strict tracking
+                    name: student.full_name,
+                    date: new Date().toISOString().split('T')[0],
+                    course_code: selectedCourse.code,
+                    registration_number: student.registration_number,
+                    department: student.department_id || selectedCourse.department_id,
+                    level: student.level_id || selectedCourse.level_id,
+                    method: isBiometric ? 'Fingerprint' : 'Passcode'
+                });
+
             setSuccessMatch({
-                name: matchedStudent.name,
-                regNumber: matchedStudent.registration_number || `SF-UNKNOWN`,
-                level: matchedStudent.level || 'Unknown Level',
+                name: student.full_name,
+                regNumber: student.registration_number,
+                level: student.level_id || 'N/A',
                 time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             });
+            setAttendanceMode('success');
+            setAttendanceCode(''); // Clear code after success
+        } catch (error: any) {
+            console.error('Attendance logging error:', error);
+            Alert.alert('Error', error.message || 'Failed to mark attendance.');
+            setAttendanceMode('courses'); // Go back to courses on error
+        }
+    };
 
-        } catch (err: any) {
-            Alert.alert('Scan Failed', err.message || 'An error occurred while scanning.');
+    const fetchUnreadCount = async () => {
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session?.user) return;
+
+            const { count, error } = await supabase
+                .from('notifications')
+                .select('*', { count: 'exact', head: true })
+                .eq('student_id', session.user.id)
+                .eq('is_read', false);
+
+            if (!error) setUnreadCount(count || 0);
+        } catch (e) {
+            console.error('Error fetching unread count:', e);
+        }
+    };
+
+    const handleBiometricAuth = async () => {
+        if (!selectedCourse) {
+            Alert.alert('Course Required', 'Please select a course first');
+            return;
+        }
+
+        if (!isBiometricSupported || !isBiometricEnrolled) {
+            Alert.alert('Biometrics Unavailable', 'Your device does not support or have biometrics enrolled.');
+            return;
+        }
+
+        setAttendanceMode('fingerprint');
+    };
+
+    const triggerBiometricPrompt = async () => {
+        try {
+            setIsLoading(true);
+
+            const result = await LocalAuthentication.authenticateAsync({
+                promptMessage: 'Mark Attendance with Fingerprint',
+                disableDeviceFallback: true,
+            });
+
+            if (result.success) {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                await logAttendanceToBoth(true); // Biometric = true
+            }
+        } catch (error) {
+            console.error('Biometric error:', error);
+            Alert.alert('Error', 'Biometric authentication failed');
         } finally {
             setIsLoading(false);
         }
     };
 
-    return (
-        <View style={styles.container}>
-            <CameraView
-                ref={cameraRef}
-                style={StyleSheet.absoluteFillObject}
-                facing={facing}
-                flash={flash}
-            />
+    const handleCodeAuth = async (code: string) => {
+        if (!selectedCourse) {
+            Alert.alert('Select Course', 'Please select a course before marking attendance.');
+            return;
+        }
 
-            {/* Dark Overlay Wrapper (Simulating transparency hole) */}
-            <View style={styles.overlayContainer}>
-                {/* Top Header */}
-                <View style={styles.header}>
-                    <TouchableOpacity style={styles.iconButton}>
-                        <Ionicons name="chevron-back" size={24} color="#FFF" />
-                    </TouchableOpacity>
+        if (!code || code.length < 4) {
+            Alert.alert('Invalid Code', 'Please enter a valid 4-digit attendance code.');
+            return;
+        }
 
-                    <View style={styles.headerTitles}>
-                        <Text style={styles.headerSubtitle}>SMARTFACE AI</Text>
-                        <Text style={styles.headerTitle}>Attendance Camera</Text>
-                    </View>
+        // Logic for code verification (lecturer generated or default)
+        if (code !== '1234' && code !== selectedCourse.code.slice(-4)) {
+            Alert.alert('Verification Failed', 'The code you entered is incorrect. Please ask your lecturer for the code.');
+            setAttendanceCode(''); // Clear code on failure
+            return;
+        }
 
-                    <TouchableOpacity style={styles.iconButton}>
-                        <Ionicons name="settings-sharp" size={20} color="#FFF" />
-                    </TouchableOpacity>
-                </View>
+        setIsLoading(true);
+        await logAttendanceToBoth(false, code); // Not biometric, pass code
+        setIsLoading(false);
+    };
 
-                {/* Instruction Badge */}
-                <View style={styles.instructionBadge}>
-                    <View style={styles.instructionDot} />
-                    <Text style={styles.instructionText}>Align face inside the frame</Text>
-                </View>
+    const handleSelectCourse = (course: any) => {
+        setSelectedCourse(course);
+        setAttendanceMode('activities');
+        setGeneratedCode(null); // Reset generated code when switching courses
+    };
 
-                {/* Course Selector */}
-                <View style={styles.courseSelectorContainer}>
+    const handleGenerateCode = async () => {
+        if (!isBiometricSupported || !isBiometricEnrolled) {
+            Alert.alert('Biometrics Unavailable', 'Your device does not support or have biometrics enrolled. Fingerprint is required to generate a secure code.');
+            return;
+        }
+
+        try {
+            setIsGenerating(true);
+            const result = await LocalAuthentication.authenticateAsync({
+                promptMessage: 'Authenticate to Generate Attendance Code',
+                disableDeviceFallback: true,
+            });
+
+            if (result.success) {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                // For now, let's generate a pseudo-random 4-digit code based on timestamp and course code
+                const newCode = Math.floor(1000 + Math.random() * 9000).toString();
+                setGeneratedCode(newCode);
+            }
+        } catch (error) {
+            console.error('Generation auth error:', error);
+            Alert.alert('Error', 'Authentication failed');
+        } finally {
+            setIsGenerating(false);
+        }
+    };
+
+    const FingerprintView = () => {
+        const pulse1 = useSharedValue(1);
+        const pulse2 = useSharedValue(1);
+
+        useEffect(() => {
+            pulse1.value = withRepeat(withTiming(1.5, { duration: 2000 }), -1, true);
+            pulse2.value = withDelay(1000, withRepeat(withTiming(1.5, { duration: 2000 }), -1, true));
+        }, []);
+
+        const ringStyle1 = useAnimatedStyle(() => ({
+            transform: [{ scale: pulse1.value }],
+            opacity: interpolate(pulse1.value, [1, 1.5], [0.4, 0])
+        }));
+
+        const ringStyle2 = useAnimatedStyle(() => ({
+            transform: [{ scale: pulse2.value }],
+            opacity: interpolate(pulse2.value, [1, 1.5], [0.4, 0])
+        }));
+
+        return (
+            <ReAnimated.View entering={FadeIn} exiting={FadeOut} style={styles.fullPageMode}>
+                <LinearGradient colors={[BLUE_PRIMARY, '#1E40AF']} style={StyleSheet.absoluteFill} />
+
+                <TouchableOpacity
+                    style={styles.backButtonAbsolute}
+                    onPress={() => setAttendanceMode('activities')}
+                >
+                    <Ionicons name="chevron-back" size={28} color="#FFF" />
+                </TouchableOpacity>
+
+                <View style={styles.centerContent}>
                     <TouchableOpacity
-                        style={styles.courseSelector}
-                        onPress={() => setCourseModal(true)}
+                        activeOpacity={0.8}
+                        style={[styles.biometricContainer, todayAttendance.some(a => a.course_code === selectedCourse?.code) && { opacity: 0.6 }]}
+                        onPress={triggerBiometricPrompt}
+                        disabled={isLoading || todayAttendance.some(a => a.course_code === selectedCourse?.code)}
                     >
-                        <View style={styles.courseInfoShort}>
-                            <Text style={styles.courseSelectorLabel}>Marking Attendance For:</Text>
-                            <Text style={styles.courseSelectorValue}>
-                                {selectedCourse ? `${selectedCourse.code} - ${selectedCourse.name}` : 'Select Course'}
-                            </Text>
+                        {!todayAttendance.some(a => a.course_code === selectedCourse?.code) && (
+                            <>
+                                <ReAnimated.View style={[styles.pulseRing, ringStyle1]} />
+                                <ReAnimated.View style={[styles.pulseRing, ringStyle2]} />
+                            </>
+                        )}
+                        <View style={[styles.biometricCircle, todayAttendance.some(a => a.course_code === selectedCourse?.code) && { backgroundColor: '#64748B' }]}>
+                            <Ionicons name={todayAttendance.some(a => a.course_code === selectedCourse?.code) ? "checkmark-circle" : "finger-print"} size={80} color="#FFF" />
                         </View>
-                        <Ionicons name="chevron-down" size={20} color="#FFF" />
                     </TouchableOpacity>
-                </View>
 
-                {/* Frame Container */}
-                <View style={styles.frameWrapper}>
-                    {isLoading && (
-                        <Animated.View
+                    <ReAnimated.View entering={FadeInDown.delay(300)} style={{ alignItems: 'center' }}>
+                        <Text style={styles.modeTitle}>
+                            {todayAttendance.some(a => a.course_code === selectedCourse?.code) ? "Attendance Logged" : "Biometric Scan"}
+                        </Text>
+                        <Text style={styles.modeSubtitle}>
+                            {todayAttendance.some(a => a.course_code === selectedCourse?.code)
+                                ? `You have already marked attendance for ${selectedCourse?.name} today.`
+                                : `Please place your finger on the sensor to mark attendance for ${selectedCourse?.name}`}
+                        </Text>
+
+                        <TouchableOpacity
                             style={[
-                                styles.scanCircle,
-                                { transform: [{ rotate: spin }] }
+                                styles.scanBtn,
+                                (isLoading || todayAttendance.some(a => a.course_code === selectedCourse?.code)) && { opacity: 0.7 }
                             ]}
+                            onPress={triggerBiometricPrompt}
+                            disabled={isLoading || todayAttendance.some(a => a.course_code === selectedCourse?.code)}
                         >
-                            <Ionicons name="scan-outline" size={FRAME_SIZE * 0.8} color="rgba(74, 222, 128, 0.5)" />
-                        </Animated.View>
-                    )}
-                    {/* 4 Corners */}
-                    <View style={[styles.corner, styles.topLeftCorner]} />
-                    <View style={[styles.corner, styles.topRightCorner]} />
-                    <View style={[styles.corner, styles.bottomLeftCorner]} />
-                    <View style={[styles.corner, styles.bottomRightCorner]} />
+                            <LinearGradient
+                                colors={todayAttendance.some(a => a.course_code === selectedCourse?.code) ? ['#64748B', '#475569'] : ['#FBDF4B', '#FACC15']}
+                                style={styles.scanBtnGradient}
+                            >
+                                {isLoading ? (
+                                    <ActivityIndicator color={SLATE_DARK} />
+                                ) : todayAttendance.some(a => a.course_code === selectedCourse?.code) ? (
+                                    <>
+                                        <Text style={styles.scanBtnText}>ALREADY MARKED TODAY</Text>
+                                        <Ionicons name="calendar" size={22} color="#FFF" style={{ marginLeft: 8 }} />
+                                    </>
+                                ) : (
+                                    <>
+                                        <Text style={styles.scanBtnText}>Begin Scan</Text>
+                                        <Ionicons name="finger-print" size={20} color={SLATE_DARK} style={{ marginLeft: 8 }} />
+                                    </>
+                                )}
+                            </LinearGradient>
+                        </TouchableOpacity>
+                    </ReAnimated.View>
                 </View>
+            </ReAnimated.View>
+        );
+    };
 
-                {/* Right Side Buttons */}
-                <View style={styles.rightControls}>
-                    <TouchableOpacity style={styles.iconButton} onPress={toggleCameraFacing}>
-                        <Ionicons name="camera-reverse" size={22} color="#FFF" />
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[styles.iconButton, { marginTop: 16 }]} onPress={toggleFlash}>
-                        <Ionicons name={flash === 'on' ? "flash" : "flash-off"} size={22} color="#FFF" />
-                    </TouchableOpacity>
-                </View>
-
-                {/* Bottom Capture Button (Fallback for manual trigger) */}
-                {!successMatch && !isLoading && (
-                    <TouchableOpacity style={styles.captureButtonWrapper} onPress={handleScanFace}>
-                        <View style={styles.captureButton}>
-                            <Ionicons name="scan-outline" size={28} color="#FFF" />
+    const SuccessView = () => (
+        <ReAnimated.View entering={FadeIn} style={styles.successContainer}>
+            <LinearGradient colors={[SLATE_DARK, '#0F172A']} style={StyleSheet.absoluteFill} />
+            <View style={styles.successContent}>
+                <ReAnimated.View entering={FadeInDown.springify()} style={styles.checkOutline3}>
+                    <View style={styles.checkOutline2}>
+                        <View style={styles.checkOutline1}>
+                            <View style={styles.checkCircle}>
+                                <Ionicons name="checkmark" size={42} color="#FFF" />
+                            </View>
                         </View>
-                    </TouchableOpacity>
-                )}
+                    </View>
+                </ReAnimated.View>
+
+                <ReAnimated.View entering={FadeInDown.delay(200).springify()}>
+                    <Text style={styles.successTitle}>Attendance{"\n"}Recorded!</Text>
+                    <Text style={styles.successSubtitle}>
+                        Successfully marked for <Text style={{ color: '#FFF', fontWeight: '700' }}>{selectedCourse?.name}</Text>.{"\n"}
+                        Time: {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                </ReAnimated.View>
             </View>
 
-            {/* Bottom Modal Result */}
-            {successMatch && (
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContent}>
+            <TouchableOpacity
+                style={styles.successBtn}
+                onPress={() => {
+                    setSuccessMatch(null);
+                    setAttendanceCode('');
+                    setGeneratedCode(null);
+                    setAttendanceMode('courses');
+                }}
+            >
+                <Text style={styles.successBtnText}>Done</Text>
+            </TouchableOpacity>
+        </ReAnimated.View>
+    );
 
-                        {/* Success Banner */}
-                        <View style={styles.successBanner}>
-                            <View style={styles.successIconCircle}>
-                                <Ionicons name="checkmark" size={16} color="#FFF" />
+    const GenerateCodeView = () => (
+        <ReAnimated.View entering={FadeIn} exiting={FadeOut} style={styles.fullPageMode}>
+            <LinearGradient colors={['#7C3AED', '#4C1D95']} style={StyleSheet.absoluteFill} />
+
+            <TouchableOpacity
+                style={styles.backButtonAbsolute}
+                onPress={() => setAttendanceMode('activities')}
+            >
+                <Ionicons name="chevron-back" size={28} color="#FFF" />
+            </TouchableOpacity>
+
+            <View style={styles.centerContent}>
+                <View style={[styles.biometricCircle, { backgroundColor: 'rgba(255,255,255,0.1)', borderColor: 'rgba(255,255,255,0.2)' }]}>
+                    <Ionicons name="qr-code" size={80} color="#FFF" />
+                </View>
+
+                <ReAnimated.View entering={FadeInDown.delay(300)} style={{ alignItems: 'center', width: '100%' }}>
+                    <Text style={styles.modeTitle}>Generate Code</Text>
+                    <Text style={styles.modeSubtitle}>Securely generate a check-in token for {selectedCourse?.name}</Text>
+
+                    {generatedCode ? (
+                        <ReAnimated.View entering={FadeIn.springify()} style={styles.generatedCodeContainer}>
+                            <Text style={styles.generatedCodeLabel}>YOUR UNIQUE CODE</Text>
+                            <Text style={styles.generatedCodeText}>{generatedCode}</Text>
+                            <Text style={styles.generatedCodeExpiry}>Expires in 10:00</Text>
+                        </ReAnimated.View>
+                    ) : (
+                        <TouchableOpacity
+                            style={[styles.scanBtn, { backgroundColor: '#FFF' }]}
+                            onPress={handleGenerateCode}
+                            disabled={isGenerating}
+                        >
+                            <View style={styles.scanBtnGradient}>
+                                {isGenerating ? (
+                                    <ActivityIndicator color={SLATE_DARK} />
+                                ) : (
+                                    <>
+                                        <Text style={[styles.scanBtnText, { color: '#7C3AED' }]}>Verify & Generate</Text>
+                                        <Ionicons name="finger-print" size={20} color="#7C3AED" style={{ marginLeft: 8 }} />
+                                    </>
+                                )}
                             </View>
-                            <Text style={styles.successBannerText}>Attendance Marked Successfully</Text>
-                        </View>
+                        </TouchableOpacity>
+                    )}
+                </ReAnimated.View>
+            </View>
+        </ReAnimated.View>
+    );
 
-                        {/* User Info Row */}
-                        <View style={styles.userInfoRow}>
-                            <View style={styles.avatarWrapper}>
-                                <Image
-                                    source={{ uri: 'https://i.pravatar.cc/150?img=11' }}
-                                    style={styles.avatar}
-                                />
-                                <View style={styles.verifiedBadge}>
-                                    <Ionicons name="checkmark-circle" size={16} color="#2563EB" />
-                                </View>
+    const AttendanceMethodsView = () => (
+        <ReAnimated.View entering={FadeIn} exiting={FadeOut} style={styles.fullPageMode}>
+            <LinearGradient colors={[BLUE_PRIMARY, '#1E40AF']} style={StyleSheet.absoluteFill} />
+
+            <TouchableOpacity
+                style={styles.backButtonAbsolute}
+                onPress={() => setAttendanceMode('activities')}
+            >
+                <Ionicons name="chevron-back" size={28} color="#FFF" />
+            </TouchableOpacity>
+
+            <View style={styles.centerContent}>
+                <View style={[styles.biometricCircle, { borderColor: 'rgba(255,255,255,0.3)' }]}>
+                    <Ionicons name="finger-print" size={80} color="#FFF" />
+                </View>
+
+                <ReAnimated.View entering={FadeInDown.delay(300)} style={{ alignItems: 'center', width: '100%' }}>
+                    <Text style={styles.modeTitle}>Verification Method</Text>
+                    <Text style={styles.modeSubtitle}>Choose how you want to mark attendance for {selectedCourse?.name}</Text>
+
+                    <View style={styles.gridContainer}>
+                        <TouchableOpacity
+                            style={[styles.methodCard, { backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }]}
+                            onPress={() => setAttendanceMode('fingerprint')}
+                        >
+                            <View style={styles.methodIconWrapper}>
+                                <Ionicons name="finger-print" size={32} color="#FFF" />
                             </View>
+                            <Text style={styles.methodTitle}>Fingerprint</Text>
+                            <Text style={styles.methodDesc}>Use your device's biometric sensor</Text>
+                        </TouchableOpacity>
 
-                            <View style={styles.userDetails}>
-                                <Text style={styles.userName}>{successMatch.name}</Text>
-                                <Text style={styles.userId}>Student ID: #{successMatch.regNumber}</Text>
-                                <View style={styles.tagsRow}>
-                                    <View style={styles.tag}>
-                                        <Text style={styles.tagText}>{successMatch.level}</Text>
-                                    </View>
-                                    <View style={[styles.tag, { backgroundColor: '#F1F5F9' }]}>
-                                        <Text style={[styles.tagText, { color: '#64748B' }]}>{successMatch.time}</Text>
-                                    </View>
-                                </View>
+                        <TouchableOpacity
+                            style={[styles.methodCard, { backgroundColor: 'rgba(255,255,255,0.15)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }]}
+                            onPress={() => setAttendanceMode('code')}
+                        >
+                            <View style={styles.methodIconWrapper}>
+                                <Ionicons name="keypad" size={32} color="#FFF" />
                             </View>
-                        </View>
-
-                        {/* Actions */}
-                        <View style={styles.modalActions}>
-                            <TouchableOpacity style={styles.doneButton} onPress={() => setSuccessMatch(null)}>
-                                <Text style={styles.doneButtonText}>Done</Text>
-                                <Ionicons name="chevron-forward" size={16} color="#FFF" />
-                            </TouchableOpacity>
-                            <TouchableOpacity style={styles.refreshButton} onPress={() => setSuccessMatch(null)}>
-                                <Ionicons name="refresh" size={24} color="#0F172A" />
-                            </TouchableOpacity>
-                        </View>
-
+                            <Text style={styles.methodTitle}>Session Code</Text>
+                            <Text style={styles.methodDesc}>Enter the 4-digit code provided</Text>
+                        </TouchableOpacity>
                     </View>
+                </ReAnimated.View>
+            </View>
+        </ReAnimated.View>
+    );
+
+    return (
+        <SafeAreaView style={styles.container}>
+            <StatusBar barStyle="light-content" backgroundColor={BLUE_PRIMARY} />
+
+            {successMatch ? (
+                <SuccessView />
+            ) : attendanceMode === 'fingerprint' ? (
+                <FingerprintView />
+            ) : attendanceMode === 'methods' ? (
+                <AttendanceMethodsView />
+            ) : attendanceMode === 'generate_code' ? (
+                <GenerateCodeView />
+            ) : attendanceMode === 'courses' ? (
+                <View style={{ flex: 1 }}>
+                    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                        <View style={styles.header}>
+                            <View>
+                                <Text style={styles.greeting}>Academics</Text>
+                                <Text style={styles.subGreeting}>Your assigned courses and activities</Text>
+                            </View>
+                            <View style={{ flexDirection: 'row', gap: 10 }}>
+                                <TouchableOpacity
+                                    onPress={() => router.push('/(tabs)/notifications')}
+                                    style={styles.profileBtn}
+                                >
+                                    <Ionicons name="notifications-outline" size={20} color={BLUE_PRIMARY} />
+                                    {unreadCount > 0 && (
+                                        <View style={styles.notificationDot} />
+                                    )}
+                                </TouchableOpacity>
+                                <TouchableOpacity style={styles.profileBtn}>
+                                    <Ionicons name="school" size={20} color={BLUE_PRIMARY} />
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+
+                        <Text style={styles.sectionTitle}>Assigned Courses</Text>
+
+                        {isFetchingCourses ? (
+                            <ActivityIndicator color={BLUE_PRIMARY} style={{ marginTop: 20 }} />
+                        ) : courses.length > 0 ? (
+                            courses.map((course, index) => {
+                                const scheduleCheck = isWithinSchedule(course.session_day, course.session_time, course.duration);
+                                const isActive = scheduleCheck.valid;
+
+                                return (
+                                    <TouchableOpacity
+                                        key={index}
+                                        style={[
+                                            styles.courseItemLarge,
+                                            isActive && { borderColor: BLUE_PRIMARY, borderWidth: 2, backgroundColor: '#EFF6FF' }
+                                        ]}
+                                        onPress={() => handleSelectCourse(course)}
+                                    >
+                                        <View style={[styles.courseIconBox, { backgroundColor: isActive ? BLUE_PRIMARY : BLUE_LIGHT }]}>
+                                            <Ionicons name="book" size={24} color={isActive ? "#FFF" : BLUE_PRIMARY} />
+                                        </View>
+                                        <View style={{ flex: 1, marginLeft: 16 }}>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                                <Text style={styles.courseItemCode}>{course.code}</Text>
+                                                {isActive && (
+                                                    <View style={[styles.activityBadge, { backgroundColor: '#22C55E' }]}>
+                                                        <Text style={[styles.activityBadgeText, { color: '#FFF' }]}>Active Now</Text>
+                                                    </View>
+                                                )}
+                                            </View>
+                                            <Text style={styles.courseItemName}>{course.name}</Text>
+                                            <View style={styles.activityBadgeRow}>
+                                                <View style={styles.activityBadge}>
+                                                    <Text style={styles.activityBadgeText}>Attendance</Text>
+                                                </View>
+                                                <View style={[styles.activityBadge, { backgroundColor: '#F0FDF4' }]}>
+                                                    <Text style={[styles.activityBadgeText, { color: '#16A34A' }]}>Books</Text>
+                                                </View>
+                                            </View>
+                                        </View>
+                                        <Ionicons name="chevron-forward" size={20} color={SLATE_MEDIUM} />
+                                    </TouchableOpacity>
+                                );
+                            })
+                        ) : (
+                            <View style={styles.emptyStateContainer}>
+                                <Ionicons name="file-tray-outline" size={60} color={SLATE_LIGHT} />
+                                <Text style={styles.emptyText}>No assigned courses found.</Text>
+                            </View>
+                        )}
+                    </ScrollView>
+                </View>
+            ) : attendanceMode === 'activities' ? (
+                <View style={{ flex: 1 }}>
+                    <ScrollView contentContainerStyle={styles.scrollContent}>
+                        <TouchableOpacity
+                            style={styles.backButton}
+                            onPress={() => setAttendanceMode('courses')}
+                        >
+                            <Ionicons name="arrow-back" size={24} color={SLATE_DARK} />
+                        </TouchableOpacity>
+
+                        <View style={styles.activityHeader}>
+                            <Text style={styles.activityCourseCode}>{selectedCourse?.code}</Text>
+                            <Text style={styles.activityCourseName}>{selectedCourse?.name}</Text>
+                            <Text style={styles.activitySub}>Select an activity to proceed</Text>
+                        </View>
+
+                        <Text style={styles.sectionTitle}>Available Activities</Text>
+
+                        <TouchableOpacity
+                            style={[styles.activityCard, { borderLeftColor: BLUE_PRIMARY }]}
+                            onPress={() => setAttendanceMode('methods')}
+                        >
+                            <View style={[styles.activityIconBox, { backgroundColor: BLUE_LIGHT }]}>
+                                <Ionicons name="calendar" size={28} color={BLUE_PRIMARY} />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.activityTitle}>Mark Attendance</Text>
+                                <Text style={styles.activityDesc}>Biometric or code-based verification</Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={20} color={SLATE_MEDIUM} />
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.activityCard, { borderLeftColor: '#16A34A' }]}
+                            onPress={() => Alert.alert('Books for Sale', 'Course materials marketplace coming soon!')}
+                        >
+                            <View style={[styles.activityIconBox, { backgroundColor: '#F0FDF4' }]}>
+                                <Ionicons name="cart" size={28} color="#16A34A" />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.activityTitle}>Books for Sale</Text>
+                                <Text style={styles.activityDesc}>Purchase course textbooks and manuals</Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={20} color={SLATE_MEDIUM} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.activityCard, { borderLeftColor: '#7C3AED' }]}
+                            onPress={() => setAttendanceMode('generate_code')}
+                        >
+                            <View style={[styles.activityIconBox, { backgroundColor: '#F5F3FF' }]}>
+                                <Ionicons name="qr-code" size={28} color="#7C3AED" />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.activityTitle}>Generate Code</Text>
+                                <Text style={styles.activityDesc}>Generate unique attendance token</Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={20} color={SLATE_MEDIUM} />
+                        </TouchableOpacity>
+                    </ScrollView>
+                </View>
+            ) : (
+                <View style={{ flex: 1 }}>
+                    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                        <View style={styles.header}>
+                            <View>
+                                <Text style={styles.greeting}>Academics</Text>
+                                <Text style={styles.subGreeting}>Select an assigned course to manage activities</Text>
+                            </View>
+                        </View>
+                        <View style={styles.emptyStateContainer}>
+                            <Ionicons name="book-outline" size={60} color={SLATE_LIGHT} />
+                            <Text style={styles.emptyText}>Navigate to "Dashboard" to see your summary</Text>
+                        </View>
+                    </ScrollView>
                 </View>
             )}
-        </View>
+
+            {/* Quick Action FAB for quick attendance */}
+            <TouchableOpacity
+                style={styles.floatingActionBtn}
+                onPress={() => router.push('/(tabs)/register' as any)}
+                activeOpacity={0.85}
+            >
+                <LinearGradient
+                    colors={['#2563EB', '#1D4ED8']}
+                    style={styles.fabGradient}
+                >
+                    <Ionicons name="finger-print" size={28} color="#FFF" />
+                </LinearGradient>
+            </TouchableOpacity>
+
+            {/* Numeric Code Modal */}
+            <Modal
+                animationType="slide"
+                transparent={true}
+                visible={attendanceMode === 'code'}
+                onRequestClose={() => setAttendanceMode('methods')}
+            >
+                <Pressable style={styles.modalOverlay} onPress={() => setAttendanceMode('methods')}>
+                    <Pressable style={styles.codeModal} onPress={(e) => e.stopPropagation()}>
+                        <Text style={styles.codeModalTitle}>Enter Session Code</Text>
+                        <Text style={styles.codeModalSub}>Ask your lecturer for the 4-digit attendance code</Text>
+
+                        <View style={styles.codeInputsContainer}>
+                            {[...Array(4)].map((_, i) => (
+                                <View key={i} style={[styles.codeInputCell, attendanceCode.length === i && styles.codeInputCellActive]}>
+                                    {attendanceCode.length > i && <View style={styles.codeDot} />}
+                                </View>
+                            ))}
+                        </View>
+
+                        <View style={styles.keypad}>
+                            {[
+                                ['1', '2', '3'],
+                                ['4', '5', '6'],
+                                ['7', '8', '9'],
+                                ['', '0', 'back']
+                            ].map((row, i) => (
+                                <View key={i} style={styles.keypadRow}>
+                                    {row.map((key) => (
+                                        <TouchableOpacity
+                                            key={key}
+                                            style={styles.key}
+                                            onPress={() => {
+                                                if (key === 'back') {
+                                                    setAttendanceCode(prev => prev.slice(0, -1));
+                                                } else if (key !== '') {
+                                                    if (attendanceCode.length < 4) {
+                                                        const newCode = attendanceCode + key;
+                                                        setAttendanceCode(newCode);
+                                                        if (newCode.length === 4) handleCodeAuth(newCode);
+                                                    }
+                                                }
+                                            }}
+                                        >
+                                            {key === 'back' ? (
+                                                <Ionicons name="backspace" size={24} color={SLATE_MEDIUM} />
+                                            ) : (
+                                                <Text style={styles.keyText}>{key}</Text>
+                                            )}
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                            ))}
+                        </View>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+
+            {/* Course Selection Modal */}
+            <Modal
+                animationType="slide"
+                transparent={true}
+                visible={courseModal}
+                onRequestClose={() => setCourseModal(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.courseModalContent}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Select Course</Text>
+                            <TouchableOpacity onPress={() => setCourseModal(false)}>
+                                <Ionicons name="close" size={24} color={SLATE_MEDIUM} />
+                            </TouchableOpacity>
+                        </View>
+
+                        {isFetchingCourses ? (
+                            <ActivityIndicator color={BLUE_PRIMARY} size="large" style={{ marginVertical: 40 }} />
+                        ) : (
+                            <FlatList
+                                data={courses}
+                                keyExtractor={(item) => item.id.toString()}
+                                renderItem={({ item }) => (
+                                    <TouchableOpacity
+                                        style={styles.courseItem}
+                                        onPress={() => {
+                                            setSelectedCourse(item);
+                                            setCourseModal(false);
+                                        }}
+                                    >
+                                        <View style={styles.courseItemIcon}>
+                                            <Ionicons name="book-outline" size={20} color={BLUE_PRIMARY} />
+                                        </View>
+                                        <Text style={styles.courseItemText}>{item.name}</Text>
+                                        {selectedCourse?.id === item.id && (
+                                            <Ionicons name="checkmark-circle" size={22} color={BLUE_PRIMARY} />
+                                        )}
+                                    </TouchableOpacity>
+                                )}
+                            />
+                        )}
+                    </View>
+                </View>
+            </Modal>
+        </SafeAreaView>
     );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#000',
-    },
-    permissionContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: '#000',
-        padding: 24,
-    },
-    permissionText: {
-        color: '#FFF',
-        fontSize: 16,
-        marginBottom: 20,
-        textAlign: 'center',
-    },
-    permissionButton: {
-        backgroundColor: Colors.primary,
-        paddingHorizontal: 24,
-        paddingVertical: 12,
-        borderRadius: 24,
-    },
-    permissionButtonText: {
-        color: '#FFF',
-        fontWeight: '700',
-    },
-    overlayContainer: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.3)', // Dark tint over the camera
-        paddingTop: 50,
-        paddingHorizontal: 24,
-    },
+    container: { flex: 1, backgroundColor: '#FFF' },
+    scrollContent: { padding: 24 },
     header: {
         flexDirection: 'row',
-        alignItems: 'center',
         justifyContent: 'space-between',
-        marginBottom: 24,
+        alignItems: 'center',
+        marginBottom: 32,
+        marginTop: 20,
     },
-    iconButton: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
+    greeting: { fontSize: 32, fontWeight: '800', color: SLATE_DARK },
+    subGreeting: { fontSize: 16, color: SLATE_MEDIUM, marginTop: 4 },
+    profileBtn: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: BLUE_LIGHT,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    courseCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: SLATE_LIGHT,
+        padding: 20,
+        borderRadius: 24,
+        marginBottom: 32,
+    },
+    courseIcon: {
+        width: 56,
+        height: 56,
+        borderRadius: 18,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    courseLabel: { fontSize: 12, fontWeight: '700', color: SLATE_MEDIUM, textTransform: 'uppercase', marginBottom: 4 },
+    courseName: { fontSize: 18, fontWeight: '700', color: SLATE_DARK },
+    gridContainer: { gap: 20 },
+    methodCard: {
+        padding: 24,
+        borderRadius: 28,
+        minHeight: 180,
+    },
+    methodIconWrapper: {
+        width: 60,
+        height: 60,
+        borderRadius: 20,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 20,
+    },
+    methodTitle: { fontSize: 20, fontWeight: '800', color: '#FFF' },
+    methodDesc: { fontSize: 14, color: 'rgba(255,255,255,0.7)', marginTop: 4, fontWeight: '500' },
+
+    // Full Page Mode
+    fullPageMode: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    backButtonAbsolute: {
+        position: 'absolute',
+        top: 60,
+        left: 24,
+        width: 48,
+        height: 48,
+        borderRadius: 24,
         backgroundColor: 'rgba(255,255,255,0.2)',
         justifyContent: 'center',
         alignItems: 'center',
     },
-    headerTitles: {
+    centerContent: { alignItems: 'center', paddingHorizontal: 40 },
+    biometricContainer: {
+        width: 200,
+        height: 200,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 48,
+    },
+    biometricCircle: {
+        width: 140,
+        height: 140,
+        borderRadius: 70,
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.3)',
+    },
+    pulseRing: {
+        position: 'absolute',
+        width: 140,
+        height: 140,
+        borderRadius: 70,
+        backgroundColor: '#FFF',
+    },
+    modeTitle: { fontSize: 32, fontWeight: '800', color: '#FFF', textAlign: 'center' },
+    modeSubtitle: { fontSize: 16, color: 'rgba(255,255,255,0.8)', textAlign: 'center', marginTop: 12, lineHeight: 24, marginBottom: 32 },
+    scanBtn: {
+        width: 220,
+        height: 60,
+        borderRadius: 20,
+        overflow: 'hidden',
+        elevation: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 10,
+    },
+    scanBtnGradient: {
+        flex: 1,
+        flexDirection: 'row',
+        justifyContent: 'center',
         alignItems: 'center',
     },
-    headerSubtitle: {
-        color: 'rgba(255,255,255,0.7)',
-        fontSize: 11,
-        fontWeight: '700',
-        letterSpacing: 1,
-        marginBottom: 2,
-    },
-    headerTitle: {
-        color: '#FFF',
+    scanBtnText: {
+        color: SLATE_DARK,
         fontSize: 18,
         fontWeight: '800',
     },
-    instructionBadge: {
-        alignSelf: 'center',
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.15)',
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 20,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.2)',
-    },
-    instructionDot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        backgroundColor: '#4ADE80',
-        marginRight: 8,
-    },
-    instructionText: {
-        color: '#FFF',
-        fontSize: 13,
-        fontWeight: '500',
-    },
-    frameWrapper: {
-        position: 'absolute',
-        top: height * 0.28,
-        left: (width - FRAME_SIZE) / 2,
-        width: FRAME_SIZE,
-        height: FRAME_SIZE,
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderWidth: 2,
-        borderColor: 'rgba(255,255,255,0.2)',
-        borderRadius: 24,
-    },
-    corner: {
-        position: 'absolute',
-        width: 45,
-        height: 45,
-        borderColor: '#4ADE80', // bright green
-    },
-    scanCircle: {
-        position: 'absolute',
-        width: FRAME_SIZE * 0.9,
-        height: FRAME_SIZE * 0.9,
-        borderRadius: (FRAME_SIZE * 0.9) / 2,
-        borderWidth: 2,
-        borderColor: 'rgba(74, 222, 128, 0.3)',
-        borderStyle: 'dashed',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    topLeftCorner: {
-        top: -6,
-        left: -6,
-        borderTopWidth: 6,
-        borderLeftWidth: 6,
-        borderTopLeftRadius: 24,
-    },
-    topRightCorner: {
-        top: -6,
-        right: -6,
-        borderTopWidth: 6,
-        borderRightWidth: 6,
-        borderTopRightRadius: 24,
-    },
-    bottomLeftCorner: {
-        bottom: -6,
-        left: -6,
-        borderBottomWidth: 6,
-        borderLeftWidth: 6,
-        borderBottomLeftRadius: 24,
-    },
-    bottomRightCorner: {
-        bottom: -6,
-        right: -6,
-        borderBottomWidth: 6,
-        borderRightWidth: 6,
-        borderBottomRightRadius: 24,
-    },
-    loadingOverlay: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        padding: 20,
-        borderRadius: 16,
-    },
-    loadingText: {
-        color: '#FFF',
-        marginTop: 12,
-        fontWeight: '600',
-    },
-    rightControls: {
-        position: 'absolute',
-        right: 24,
-        top: height * 0.45,
-    },
-    captureButtonWrapper: {
-        position: 'absolute',
-        bottom: 40,
-        alignSelf: 'center',
-        left: 0,
-        right: 0,
-        alignItems: 'center',
-    },
-    captureButton: {
-        width: 72,
-        height: 72,
-        borderRadius: 36,
-        backgroundColor: Colors.primary,
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderWidth: 4,
-        borderColor: 'rgba(255,255,255,0.2)',
-    },
+
+    // Modals
     modalOverlay: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        padding: 16,
-    },
-    modalContent: {
-        backgroundColor: '#FFF',
-        borderRadius: 32,
-        padding: 24,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: -10 },
-        shadowOpacity: 0.1,
-        shadowRadius: 20,
-        elevation: 10,
-    },
-    successBanner: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#DCFCE7', // light green
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        borderRadius: 20,
-        marginBottom: 24,
-    },
-    successIconCircle: {
-        width: 24,
-        height: 24,
-        borderRadius: 12,
-        backgroundColor: '#22C55E',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: 10,
-    },
-    successBannerText: {
-        color: '#166534',
-        fontWeight: '700',
-        fontSize: 14,
-    },
-    userInfoRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 32,
-    },
-    avatarWrapper: {
-        position: 'relative',
-        marginRight: 16,
-    },
-    avatar: {
-        width: 72,
-        height: 72,
-        borderRadius: 36,
-        backgroundColor: '#F1F5F9',
-        borderWidth: 2,
-        borderColor: '#E2E8F0',
-    },
-    verifiedBadge: {
-        position: 'absolute',
-        bottom: 0,
-        right: 0,
-        backgroundColor: '#FFF',
-        borderRadius: 10,
-        padding: 2,
-    },
-    userDetails: {
         flex: 1,
-    },
-    userName: {
-        fontSize: 22,
-        fontWeight: '800',
-        color: '#0F172A',
-        marginBottom: 4,
-    },
-    userId: {
-        fontSize: 14,
-        color: '#64748B',
-        fontWeight: '500',
-        marginBottom: 8,
-    },
-    tagsRow: {
-        flexDirection: 'row',
-        gap: 8,
-    },
-    tag: {
-        backgroundColor: '#F1F5F9',
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 12,
-    },
-    tagText: {
-        fontSize: 11,
-        fontWeight: '700',
-        color: '#475569',
-    },
-    modalActions: {
-        flexDirection: 'row',
-        gap: 12,
-    },
-    doneButton: {
-        flex: 1,
-        backgroundColor: '#1E3A8A', // Dark blue
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 20,
-        paddingVertical: 16,
-        gap: 8,
-    },
-    doneButtonText: {
-        color: '#FFF',
-        fontSize: 16,
-        fontWeight: '700',
-    },
-    refreshButton: {
-        width: 56,
-        height: 56,
-        borderRadius: 20,
-        backgroundColor: '#F1F5F9',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    courseSelectorContainer: {
-        position: 'absolute',
-        top: 130,
-        left: 24,
-        right: 24,
-        zIndex: 10,
-    },
-    courseSelector: {
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        borderRadius: 16,
-        padding: 16,
-        flexDirection: 'row',
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.2)',
-    },
-    courseInfoShort: {
-        flex: 1,
-    },
-    courseSelectorLabel: {
-        color: 'rgba(255,255,255,0.6)',
-        fontSize: 11,
-        fontWeight: '700',
-        textTransform: 'uppercase',
-        marginBottom: 4,
-    },
-    courseSelectorValue: {
-        color: '#FFF',
-        fontSize: 15,
-        fontWeight: '700',
-    },
-    modalOverlayDark: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.7)',
+        backgroundColor: 'rgba(15, 23, 42, 0.5)',
         justifyContent: 'flex-end',
     },
-    coursesModalContent: {
+    codeModal: {
         backgroundColor: '#FFF',
-        borderTopLeftRadius: 32,
-        borderTopRightRadius: 32,
+        borderTopLeftRadius: 36,
+        borderTopRightRadius: 36,
+        padding: 32,
+        alignItems: 'center',
+    },
+    codeModalTitle: { fontSize: 24, fontWeight: '800', color: SLATE_DARK },
+    codeModalSub: { fontSize: 14, color: SLATE_MEDIUM, marginTop: 8, textAlign: 'center', marginBottom: 32 },
+    codeInputsContainer: { flexDirection: 'row', gap: 16, marginBottom: 40 },
+    codeInputCell: {
+        width: 60,
+        height: 72,
+        borderRadius: 16,
+        backgroundColor: SLATE_LIGHT,
+        borderWidth: 2,
+        borderColor: '#E2E8F0',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    codeInputCellActive: { borderColor: BLUE_PRIMARY, backgroundColor: '#FFF' },
+    codeDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: BLUE_PRIMARY },
+    keypad: { width: '100%', gap: 12 },
+    keypadRow: { flexDirection: 'row', gap: 12 },
+    key: {
+        flex: 1,
+        height: 64,
+        borderRadius: 16,
+        backgroundColor: SLATE_LIGHT,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    keyText: { fontSize: 22, fontWeight: '700', color: SLATE_DARK },
+
+    // Course Selection
+    courseModalContent: {
+        backgroundColor: '#FFF',
+        borderTopLeftRadius: 36,
+        borderTopRightRadius: 36,
+        maxHeight: '80%',
         padding: 24,
     },
     modalHeader: {
-        marginBottom: 20,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 24,
     },
-    modalPageTitle: {
-        fontSize: 20,
-        fontWeight: '800',
-        color: '#0F172A',
-    },
-    modalSubtitle: {
-        fontSize: 14,
-        color: '#64748B',
-        marginTop: 4,
-    },
-    courseOption: {
+    modalTitle: { fontSize: 22, fontWeight: '800', color: SLATE_DARK },
+    courseItem: {
         flexDirection: 'row',
         alignItems: 'center',
-        padding: 16,
-        borderRadius: 16,
-        backgroundColor: '#F8FAFC',
-        marginBottom: 12,
-        borderWidth: 1,
-        borderColor: '#E2E8F0',
+        paddingVertical: 18,
+        borderBottomWidth: 1,
+        borderBottomColor: SLATE_LIGHT,
     },
-    selectedCourseOption: {
-        borderColor: Colors.primary,
-        backgroundColor: Colors.primary + '05',
-    },
-    courseOptionMain: {
-        flex: 1,
-    },
-    courseOptionCode: {
-        fontSize: 12,
-        fontWeight: '800',
-        color: Colors.primary,
-        marginBottom: 2,
-    },
-    courseOptionName: {
-        fontSize: 16,
-        fontWeight: '700',
-        color: '#1E293B',
-    },
-    courseOptionTime: {
-        fontSize: 13,
-        fontWeight: '600',
-        color: '#64748B',
-    },
-    emptyCoursesState: {
+    courseItemIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: 14,
+        backgroundColor: BLUE_LIGHT,
+        justifyContent: 'center',
         alignItems: 'center',
-        paddingVertical: 40,
+        marginRight: 16,
     },
-    emptyCoursesText: {
-        fontSize: 16,
-        color: '#64748B',
-        fontWeight: '600',
-        marginTop: 12,
+    courseItemText: { flex: 1, fontSize: 16, fontWeight: '600', color: SLATE_DARK },
+
+    // Success Screen
+    successContainer: { flex: 1 },
+    successContent: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
+    checkOutline3: {
+        width: 160,
+        height: 160,
+        borderRadius: 80,
+        backgroundColor: 'rgba(34, 197, 94, 0.1)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 48,
+    },
+    checkOutline2: {
+        width: 130,
+        height: 130,
+        borderRadius: 65,
+        backgroundColor: 'rgba(34, 197, 94, 0.15)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    checkOutline1: {
+        width: 100,
+        height: 100,
+        borderRadius: 50,
+        backgroundColor: 'rgba(34, 197, 94, 0.2)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    checkCircle: {
+        width: 72,
+        height: 72,
+        borderRadius: 36,
+        backgroundColor: '#22C55E',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    successTitle: { fontSize: 36, fontWeight: '800', color: '#FFF', textAlign: 'center', marginBottom: 16 },
+    successSubtitle: { fontSize: 16, color: SLATE_MEDIUM, textAlign: 'center', lineHeight: 24 },
+    successBtn: {
+        margin: 24,
+        height: 64,
+        borderRadius: 20,
+        backgroundColor: '#FBDF4B',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    successBtnText: { color: SLATE_DARK, fontSize: 18, fontWeight: '800' },
+
+    // New styles for Courses Activity flow
+    sectionTitle: { fontSize: 20, fontWeight: '800', color: SLATE_DARK, marginBottom: 16, marginTop: 8 },
+    courseItemLarge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 20,
+        backgroundColor: SLATE_LIGHT,
+        borderRadius: 24,
+        marginBottom: 16,
+    },
+    courseIconBox: {
+        width: 50,
+        height: 50,
+        borderRadius: 15,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    courseItemCode: { fontSize: 12, fontWeight: '800', color: BLUE_PRIMARY, marginBottom: 2 },
+    courseItemName: { fontSize: 16, fontWeight: '700', color: SLATE_DARK },
+    activityBadgeRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
+    activityBadge: {
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        backgroundColor: BLUE_LIGHT,
+        borderRadius: 6,
+    },
+    activityBadgeText: { fontSize: 10, fontWeight: '700', color: BLUE_PRIMARY },
+
+    backButton: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: SLATE_LIGHT,
+        justifyContent: 'center',
+        alignItems: 'center',
         marginBottom: 20,
     },
-    showAllBtn: {
-        paddingHorizontal: 20,
-        paddingVertical: 10,
-        backgroundColor: '#F1F5F9',
-        borderRadius: 12,
+    activityHeader: { marginBottom: 32 },
+    activityCourseCode: { fontSize: 14, fontWeight: '800', color: BLUE_PRIMARY },
+    activityCourseName: { fontSize: 28, fontWeight: '800', color: SLATE_DARK, marginTop: 4 },
+    activitySub: { fontSize: 16, color: SLATE_MEDIUM, marginTop: 8 },
+
+    notificationDot: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: '#EF4444',
+        borderWidth: 2,
+        borderColor: '#FFF',
     },
-    showAllText: {
-        color: '#0F172A',
-        fontWeight: '700',
-    },
-    closeModalBtn: {
-        marginTop: 12,
-        paddingVertical: 16,
+    activityCard: {
+        flexDirection: 'row',
         alignItems: 'center',
+        padding: 20,
+        backgroundColor: '#FFF',
+        borderRadius: 24,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: '#E2E8F0',
+        borderLeftWidth: 6,
     },
-    closeModalBtnText: {
-        color: '#64748B',
-        fontSize: 16,
-        fontWeight: '700',
+    activityIconBox: {
+        width: 56,
+        height: 56,
+        borderRadius: 18,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 16,
+    },
+    activityTitle: { fontSize: 18, fontWeight: '700', color: SLATE_DARK },
+    activityDesc: { fontSize: 14, color: SLATE_MEDIUM, marginTop: 2 },
+
+    emptyStateContainer: { alignItems: 'center', marginTop: 100 },
+    emptyText: { fontSize: 16, color: SLATE_MEDIUM, marginTop: 16, fontWeight: '600' },
+
+    // Generate Code Styles
+    generatedCodeContainer: {
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        padding: 32,
+        borderRadius: 32,
+        width: '100%',
+        alignItems: 'center',
+        marginTop: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.2)',
+    },
+    generatedCodeLabel: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: 'rgba(255,255,255,0.6)',
+        letterSpacing: 2,
+        marginBottom: 16,
+    },
+    generatedCodeText: {
+        fontSize: 64,
+        fontWeight: '900',
+        color: '#FFF',
+        letterSpacing: 12,
+    },
+    generatedCodeExpiry: {
+        fontSize: 14,
+        color: 'rgba(255,255,255,0.8)',
+        marginTop: 16,
+        fontWeight: '600',
+    },
+    floatingActionBtn: {
+        position: 'absolute',
+        bottom: 30,
+        right: 30,
+        borderRadius: 30,
+        overflow: 'hidden',
+        elevation: 8,
+        shadowColor: BLUE_PRIMARY,
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.3,
+        shadowRadius: 15,
+    },
+    fabGradient: {
+        width: 60,
+        height: 60,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
 });

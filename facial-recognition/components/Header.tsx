@@ -3,15 +3,18 @@ import React from 'react';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../constants/Colors';
 
+const BLUE_PRIMARY = '#2563EB';
+
 interface HeaderProps {
     userName: string;
     date: string;
     avatarUrl?: string;
     onNotificationPress?: () => void;
     light?: boolean;
+    unreadCount?: number;
 }
 
-export default function Header({ userName, date, avatarUrl, onNotificationPress, light }: HeaderProps) {
+export default function Header({ userName, date, avatarUrl, onNotificationPress, light, unreadCount = 0 }: HeaderProps) {
     const textColor = light ? '#FFF' : '#0A192F';
     const subTextColor = light ? 'rgba(255,255,255,0.7)' : Colors.textSecondary;
 
@@ -39,7 +42,9 @@ export default function Header({ userName, date, avatarUrl, onNotificationPress,
                 ]}
             >
                 <Ionicons name="notifications" size={22} color={light ? '#FFF' : Colors.text} />
-                <View style={[styles.badge, light && { borderColor: Colors.primary }]} />
+                {unreadCount > 0 && (
+                    <View style={[styles.badge, light && { borderColor: BLUE_PRIMARY }]} />
+                )}
             </TouchableOpacity>
         </View>
     );
@@ -90,7 +95,7 @@ const styles = StyleSheet.create({
         width: 48,
         height: 48,
         borderRadius: 24,
-        backgroundColor: Colors.card,
+        backgroundColor: Colors.surface,
         justifyContent: 'center',
         alignItems: 'center',
         shadowColor: '#000',
@@ -110,6 +115,6 @@ const styles = StyleSheet.create({
         borderRadius: 5,
         backgroundColor: '#F87171', // soft red
         borderWidth: 2,
-        borderColor: Colors.card,
+        borderColor: Colors.surface,
     },
 });
