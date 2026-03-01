@@ -1,0 +1,42 @@
+/* AttendanceLog specific styles */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.status-badge.present {
+    background-color: #dcfce7;
+    color: #16a34a;
+}
+
+.status-badge.absent {
+    background-color: #fee2e2;
+    color: #dc2626;
+}
+
+.method-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    background-color: #f1f5f9;
+    color: #475569;
+}
+
+.method-badge.fingerprint {
+    background-color: #eff6ff;
+    color: #2563eb;
+}
+
+.method-badge.passcode {
+    background-color: #f5f3ff;
+    color: #7c3aed;
+}
