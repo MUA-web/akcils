@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Plus, X, User } from 'lucide-react';
+import { Plus, X, User, Trash2 } from 'lucide-react';
 import './Books.css';
 
 interface Book {
@@ -29,6 +29,7 @@ const Books = () => {
     const [students, setStudents] = useState<Student[]>([]);
     const [purchases, setPurchases] = useState<Record<string, boolean>>({});
     const [pageLoading, setPageLoading] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
     // Form states
     const [newBook, setNewBook] = useState({
@@ -56,7 +57,7 @@ const Books = () => {
 
     const fetchMetadata = async () => {
         // Fetch all levels and departments from their respective tables
-        const { data: levelTableData } = await supabase.from('levels').select('name');
+        const { data: levelTableData } = await supabase.from('levels').select('label');
         const { data: deptTableData } = await supabase.from('departments').select('name');
 
         // Also fetch unique values from students table for fallbacks/matching
@@ -66,9 +67,9 @@ const Books = () => {
         const uniqueStudentDepts = Array.from(new Set(studentData?.map(s => s.department))).filter(Boolean) as string[];
 
         // Use table data if available, otherwise use student data, otherwise use defaults
-        const defaultLevels = ['1', '2', '3', '4', '5'];
+        const defaultLevels = ['100L', '200L', '300L', '400L', '500L'];
         const allLevels = levelTableData?.length
-            ? levelTableData.map(l => l.name).filter(Boolean) as string[]
+            ? Array.from(new Set(levelTableData.map(l => l.label).filter(Boolean))) as string[]
             : (uniqueStudentLevels.length ? uniqueStudentLevels : defaultLevels);
 
         const defaultDepts = ['Computer Science', 'Mathematics', 'Physics', 'Engineering'];
@@ -76,7 +77,8 @@ const Books = () => {
             ? deptTableData.map(d => d.name).filter(Boolean) as string[]
             : (uniqueStudentDepts.length ? uniqueStudentDepts : defaultDepts);
 
-        setLevels(allLevels.sort());
+        // Sort but extract numbers if possible to sort 100L before 200L properly
+        setLevels(allLevels.sort((a, b) => a.localeCompare(b, undefined, { numeric: true })));
         setDepartments(allDepts.sort());
 
         setNewBook(prev => ({
@@ -198,6 +200,58 @@ const Books = () => {
         }
     };
 
+    const handleDeleteBook = async (id: string) => {
+        if (window.confirm('Are you sure you want to delete this book? This will also remove all purchase records.')) {
+            try {
+                const { error } = await supabase
+                    .from('books')
+                    .delete()
+                    .eq('id', id);
+                if (error) throw error;
+                setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
+                fetchBooks();
+            } catch (error: any) {
+                alert(error.message || 'Failed to delete book');
+            }
+        }
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedIds.length === 0) return;
+
+        if (window.confirm(`Are you sure you want to delete ${selectedIds.length} books? This will also remove all their purchase records.`)) {
+            setLoading(true);
+            try {
+                const { error } = await supabase
+                    .from('books')
+                    .delete()
+                    .in('id', selectedIds);
+
+                if (error) throw error;
+
+                setSelectedIds([]);
+                fetchBooks();
+            } catch (error: any) {
+                alert(error.message || 'Failed to delete selected books');
+                setLoading(false);
+            }
+        }
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedIds.length === books.length && books.length > 0) {
+            setSelectedIds([]);
+        } else {
+            setSelectedIds(books.map(b => b.id));
+        }
+    };
+
+    const toggleSelect = (id: string) => {
+        setSelectedIds(prev =>
+            prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+        );
+    };
+
     if (view === 'tracking' && selectedBook) {
         return (
             <div className="books-container fade-in">
@@ -287,15 +341,26 @@ const Books = () => {
     }
 
     return (
-        <div className="books-container fade-in">
-            <div className="dashboard-top-header">
+        <div className="page-container fade-in">
+            <div className="page-header">
                 <div>
-                    <h1 className="page-title">Book Management</h1>
-                    <p className="page-subtitle">Track student book payments by level and department.</p>
+                    <h2 style={{ fontSize: '24px', fontWeight: '800', margin: 0 }}>Book Management</h2>
+                    <p className="page-subtitle" style={{ color: 'var(--slate-medium)', marginTop: '4px' }}>Track student book payments by level and department.</p>
                 </div>
-                <button className="submit-btn" style={{ width: 'auto', padding: '10px 24px' }} onClick={() => setShowAddModal(true)}>
-                    <Plus size={18} style={{ marginRight: '8px' }} /> Register New Book
-                </button>
+                <div className="header-actions">
+                    {books.length > 0 && view === 'list' && (
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                            {selectedIds.length > 0 && (
+                                <button className="delete-btn bulk-delete" onClick={handleBulkDelete}>
+                                    <Trash2 size={16} /> Delete Selected ({selectedIds.length})
+                                </button>
+                            )}
+                        </div>
+                    )}
+                    <button className="primary-btn" onClick={() => setShowAddModal(true)}>
+                        <Plus size={18} style={{ marginRight: '8px' }} /> Register New Book
+                    </button>
+                </div>
             </div>
 
             <div className="books-list-card" style={{ marginTop: '30px' }}>
@@ -306,6 +371,13 @@ const Books = () => {
                     <table className="books-table">
                         <thead>
                             <tr>
+                                <th style={{ width: '40px' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={books.length > 0 && selectedIds.length === books.length}
+                                        onChange={toggleSelectAll}
+                                    />
+                                </th>
                                 <th>Book Title</th>
                                 <th>Target Group</th>
                                 <th>Unit Price</th>
@@ -314,7 +386,14 @@ const Books = () => {
                         </thead>
                         <tbody>
                             {books.map(book => (
-                                <tr key={book.id}>
+                                <tr key={book.id} className={selectedIds.includes(book.id) ? 'selected-row' : ''}>
+                                    <td>
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedIds.includes(book.id)}
+                                            onChange={() => toggleSelect(book.id)}
+                                        />
+                                    </td>
                                     <td style={{ fontWeight: '700', fontSize: '15px' }}>{book.title}</td>
                                     <td>
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -324,9 +403,14 @@ const Books = () => {
                                     </td>
                                     <td style={{ color: 'var(--primary-blue)', fontWeight: '800', fontSize: '16px' }}>₦{book.price.toLocaleString()}</td>
                                     <td>
-                                        <button className="track-btn-premium" onClick={() => openTracking(book)}>
-                                            View Sales & Tracking
-                                        </button>
+                                        <div style={{ display: 'flex', gap: '10px' }}>
+                                            <button className="track-btn-premium" onClick={() => openTracking(book)}>
+                                                View Sales & Tracking
+                                            </button>
+                                            <button className="delete-btn-simple" onClick={() => handleDeleteBook(book.id)}>
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
                                     </td>
                                 </tr>
                             ))}

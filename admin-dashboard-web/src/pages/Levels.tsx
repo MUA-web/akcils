@@ -7,6 +7,7 @@ const Levels = () => {
     const [levels, setLevels] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isModalVisible, setIsModalVisible] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
     // Form State
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -85,6 +86,7 @@ const Levels = () => {
                         .delete()
                         .eq('id', id);
                     if (error) throw error;
+                    setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
                     fetchLevels();
                 } catch (error: any) {
                     alert(error.message || 'Failed to delete');
@@ -93,13 +95,61 @@ const Levels = () => {
         }
     };
 
+    const handleBulkDelete = async () => {
+        if (selectedIds.length === 0) return;
+
+        if (window.confirm(`Are you sure you want to delete ${selectedIds.length} levels?`)) {
+            setIsLoading(true);
+            try {
+                const { error } = await supabase
+                    .from('levels')
+                    .delete()
+                    .in('id', selectedIds);
+
+                if (error) throw error;
+
+                setSelectedIds([]);
+                fetchLevels();
+            } catch (error: any) {
+                alert(error.message || 'Failed to delete selected levels');
+                setIsLoading(false);
+            }
+        }
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedIds.length === levels.length && levels.length > 0) {
+            setSelectedIds([]);
+        } else {
+            setSelectedIds(levels.map(l => l.id));
+        }
+    };
+
+    const toggleSelect = (id: string) => {
+        setSelectedIds(prev =>
+            prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+        );
+    };
+
     return (
         <div className="page-container">
             <div className="page-header">
                 <h2>Levels Config</h2>
-                <button className="primary-btn" onClick={() => handleOpenModal()}>
-                    <Plus size={16} /> Add Level
-                </button>
+                <div className="header-actions">
+                    {levels.length > 0 && (
+                        <button className="secondary-btn" onClick={toggleSelectAll}>
+                            {selectedIds.length === levels.length ? 'Deselect All' : 'Select All'}
+                        </button>
+                    )}
+                    {selectedIds.length > 0 && (
+                        <button className="delete-btn bulk-delete" onClick={handleBulkDelete}>
+                            <Trash2 size={16} /> Delete Selected ({selectedIds.length})
+                        </button>
+                    )}
+                    <button className="primary-btn" onClick={() => handleOpenModal()}>
+                        <Plus size={16} /> Add Level
+                    </button>
+                </div>
             </div>
 
             <div className="page-content">
@@ -109,8 +159,22 @@ const Levels = () => {
                     <div className="levels-grid">
                         {levels.length > 0 ? (
                             levels.map((item) => (
-                                <div className="level-card" key={item.id}>
+                                <div
+                                    className={`level-card ${selectedIds.includes(item.id) ? 'selected-card' : ''}`}
+                                    key={item.id}
+                                    onClick={() => toggleSelect(item.id)}
+                                >
                                     <div className="level-info">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedIds.includes(item.id)}
+                                            onChange={(e) => {
+                                                e.stopPropagation();
+                                                toggleSelect(item.id);
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            style={{ marginRight: '8px' }}
+                                        />
                                         <div className="icon-box">
                                             <Layers size={20} color="#6b46c1" />
                                         </div>
@@ -126,7 +190,10 @@ const Levels = () => {
                                         </button>
                                         <button
                                             className="delete-btn-icon"
-                                            onClick={() => handleDelete(item.id)}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleDelete(item.id);
+                                            }}
                                             title="Delete Level"
                                         >
                                             <Trash2 size={16} />

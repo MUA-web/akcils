@@ -125,6 +125,42 @@
     background-color: #ffffff;
 }
 
+.header-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.bulk-delete {
+    background-color: #fee2e2;
+    color: #ef4444;
+    border: 1px solid #fecaca;
+    padding: 10px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s;
+}
+
+.bulk-delete:hover {
+    background-color: #fecaca;
+    transform: translateY(-1px);
+}
+
+.selected-row {
+    background-color: #f5f3ff !important;
+}
+
+.data-table input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: #6b46c1;
+}
+
 .submit-btn {
     margin-top: 10px;
     justify-content: center;

@@ -21,6 +21,7 @@ const Students = () => {
 
     // Sorting State
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+    const [selectedRegs, setSelectedRegs] = useState<string[]>([]);
 
     const [availableDepts, setAvailableDepts] = useState<string[]>(['All']);
     const [availableLevels, setAvailableLevels] = useState<string[]>(['All']);
@@ -83,24 +84,63 @@ const Students = () => {
     const handleDeleteStudent = async (regNo: string) => {
         if (window.confirm(`Are you sure you want to remove student with ID ${regNo}?`)) {
             try {
-                // We use an RPC call because deleting from `students` doesn't automatically 
-                // delete the Supabase Auth account. The RPC handles both.
-                const { error, data } = await supabase.rpc('delete_student_by_reg', { reg_no: regNo });
-
+                const { error } = await supabase.rpc('delete_student_by_reg', { reg_no: regNo });
                 if (error) {
-                    console.error('RPC Delete Error:', error);
-                    // Fallback to normal delete if RPC doesn't exist yet
                     const fallback = await supabase.from('students').delete().eq('registration_number', regNo);
                     if (fallback.error) throw fallback.error;
-                } else if (data === false) {
-                    console.warn('Student not found in RPC logic.');
                 }
-
+                setSelectedRegs(prev => prev.filter(r => r !== regNo));
                 fetchStudents();
             } catch (error: any) {
                 alert(error.message || 'Failed to delete student');
             }
         }
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedRegs.length === 0) return;
+
+        if (window.confirm(`Are you sure you want to delete ${selectedRegs.length} students? This will also remove their authentication accounts.`)) {
+            setIsLoading(true);
+            try {
+                // We perform deletions in parallel for better performance
+                const deletePromises = selectedRegs.map(regNo =>
+                    supabase.rpc('delete_student_by_reg', { reg_no: regNo })
+                );
+
+                const results = await Promise.all(deletePromises);
+
+                // Check if any had errors and fallback to simple table delete if needed
+                const failedRegs: string[] = [];
+                results.forEach((res, index) => {
+                    if (res.error) failedRegs.push(selectedRegs[index]);
+                });
+
+                if (failedRegs.length > 0) {
+                    await supabase.from('students').delete().in('registration_number', failedRegs);
+                }
+
+                setSelectedRegs([]);
+                fetchStudents();
+            } catch (error: any) {
+                alert(error.message || 'Failed to delete selected students');
+                setIsLoading(false);
+            }
+        }
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedRegs.length === filteredStudents.length && filteredStudents.length > 0) {
+            setSelectedRegs([]);
+        } else {
+            setSelectedRegs(filteredStudents.map(s => s.registrationNumber));
+        }
+    };
+
+    const toggleSelect = (regNo: string) => {
+        setSelectedRegs(prev =>
+            prev.includes(regNo) ? prev.filter(r => r !== regNo) : [...prev, regNo]
+        );
     };
 
     const handleEditClick = (student: any) => {
@@ -174,6 +214,13 @@ const Students = () => {
         <div className="page-container">
             <div className="page-header">
                 <h2>Students</h2>
+                <div className="header-actions">
+                    {selectedRegs.length > 0 && (
+                        <button className="delete-btn bulk-delete" onClick={handleBulkDelete}>
+                            <Trash2 size={16} /> Delete Selected ({selectedRegs.length})
+                        </button>
+                    )}
+                </div>
             </div>
 
             <div className="page-content">
@@ -216,6 +263,13 @@ const Students = () => {
                         <table className="data-table">
                             <thead>
                                 <tr>
+                                    <th style={{ width: '40px' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={filteredStudents.length > 0 && selectedRegs.length === filteredStudents.length}
+                                            onChange={toggleSelectAll}
+                                        />
+                                    </th>
                                     <th className="sortable-header" onClick={() => handleSort('name')}>
                                         Student Info <ArrowUpDown size={14} className="sort-icon" />
                                     </th>
@@ -230,7 +284,14 @@ const Students = () => {
                             </thead>
                             <tbody>
                                 {filteredStudents.length > 0 ? filteredStudents.map((student) => (
-                                    <tr key={student.registrationNumber}>
+                                    <tr key={student.registrationNumber} className={selectedRegs.includes(student.registrationNumber) ? 'selected-row' : ''}>
+                                        <td>
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedRegs.includes(student.registrationNumber)}
+                                                onChange={() => toggleSelect(student.registrationNumber)}
+                                            />
+                                        </td>
                                         <td>
                                             <div className="student-info-cell">
                                                 <div className="student-avatar">

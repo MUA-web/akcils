@@ -13,6 +13,7 @@ const Departments = () => {
     const [name, setName] = useState('');
     const [prefix, setPrefix] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
     useEffect(() => {
         fetchDepartments();
@@ -88,6 +89,7 @@ const Departments = () => {
                         .delete()
                         .eq('id', id);
                     if (error) throw error;
+                    setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
                     fetchDepartments();
                 } catch (error: any) {
                     alert(error.message || 'Failed to delete');
@@ -96,13 +98,56 @@ const Departments = () => {
         }
     };
 
+    const handleBulkDelete = async () => {
+        if (selectedIds.length === 0) return;
+
+        if (window.confirm(`Are you sure you want to delete ${selectedIds.length} departments?`)) {
+            setIsLoading(true);
+            try {
+                const { error } = await supabase
+                    .from('departments')
+                    .delete()
+                    .in('id', selectedIds);
+
+                if (error) throw error;
+
+                setSelectedIds([]);
+                fetchDepartments();
+            } catch (error: any) {
+                alert(error.message || 'Failed to delete selected departments');
+                setIsLoading(false);
+            }
+        }
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedIds.length === departments.length) {
+            setSelectedIds([]);
+        } else {
+            setSelectedIds(departments.map(d => d.id));
+        }
+    };
+
+    const toggleSelect = (id: string) => {
+        setSelectedIds(prev =>
+            prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+        );
+    };
+
     return (
         <div className="page-container">
             <div className="page-header">
                 <h2>Departments</h2>
-                <button className="primary-btn" onClick={() => handleOpenModal()}>
-                    <Plus size={16} /> Add Department
-                </button>
+                <div className="header-actions">
+                    {selectedIds.length > 0 && (
+                        <button className="delete-btn bulk-delete" onClick={handleBulkDelete}>
+                            <Trash2 size={16} /> Delete Selected ({selectedIds.length})
+                        </button>
+                    )}
+                    <button className="primary-btn" onClick={() => handleOpenModal()}>
+                        <Plus size={16} /> Add Department
+                    </button>
+                </div>
             </div>
 
             <div className="page-content">
@@ -113,6 +158,13 @@ const Departments = () => {
                         <table className="data-table">
                             <thead>
                                 <tr>
+                                    <th style={{ width: '40px' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={departments.length > 0 && selectedIds.length === departments.length}
+                                            onChange={toggleSelectAll}
+                                        />
+                                    </th>
                                     <th>Department Name</th>
                                     <th>Prefix</th>
                                     <th className="action-col">Actions</th>
@@ -120,7 +172,14 @@ const Departments = () => {
                             </thead>
                             <tbody>
                                 {departments.length > 0 ? departments.map((dept) => (
-                                    <tr key={dept.id}>
+                                    <tr key={dept.id} className={selectedIds.includes(dept.id) ? 'selected-row' : ''}>
+                                        <td>
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedIds.includes(dept.id)}
+                                                onChange={() => toggleSelect(dept.id)}
+                                            />
+                                        </td>
                                         <td style={{ fontWeight: 600 }}>{dept.name}</td>
                                         <td>
                                             <span className="level-badge">{dept.prefix}</span>

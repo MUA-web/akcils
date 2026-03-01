@@ -213,6 +213,66 @@
     color: #0f172a;
 }
 
+.header-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.bulk-delete {
+    background-color: #fee2e2;
+    color: #ef4444;
+    border: 1px solid #fecaca;
+    padding: 10px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s;
+}
+
+.bulk-delete:hover {
+    background-color: #fecaca;
+    transform: translateY(-1px);
+}
+
+.secondary-btn {
+    background-color: white;
+    color: #475569;
+    border: 1px solid #e2e8f0;
+    padding: 10px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.secondary-btn:hover {
+    background-color: #f8fafc;
+    border-color: #cbd5e1;
+}
+
+.selected-card {
+    border-color: #6b46c1 !important;
+    background-color: #f5f3ff !important;
+}
+
+.course-selection {
+    margin-right: 12px;
+    display: flex;
+    align-items: center;
+}
+
+.course-selection input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: #6b46c1;
+}
+
 .start-session-btn {
     display: flex;
     align-items: center;

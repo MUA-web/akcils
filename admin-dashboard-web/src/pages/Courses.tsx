@@ -14,6 +14,7 @@ const TIME_SLOTS = [
 const Courses = () => {
     const [courses, setCourses] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
     // Form State
     const [isModalVisible, setIsModalVisible] = useState(false);
@@ -224,12 +225,49 @@ const Courses = () => {
                         .delete()
                         .eq('id', id);
                     if (error) throw error;
+                    setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
                     fetchCourses();
                 } catch (error: any) {
                     alert('Failed to delete course');
                 }
             })();
         }
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedIds.length === 0) return;
+
+        if (window.confirm(`Are you sure you want to delete ${selectedIds.length} courses?`)) {
+            setIsLoading(true);
+            try {
+                const { error } = await supabase
+                    .from('courses')
+                    .delete()
+                    .in('id', selectedIds);
+
+                if (error) throw error;
+
+                setSelectedIds([]);
+                fetchCourses();
+            } catch (error: any) {
+                alert(error.message || 'Failed to delete selected courses');
+                setIsLoading(false);
+            }
+        }
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedIds.length === courses.length && courses.length > 0) {
+            setSelectedIds([]);
+        } else {
+            setSelectedIds(courses.map(c => c.id));
+        }
+    };
+
+    const toggleSelect = (id: string) => {
+        setSelectedIds(prev =>
+            prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+        );
     };
 
     const handleStartSession = (course: any) => {
@@ -273,9 +311,21 @@ const Courses = () => {
         <div className="page-container">
             <div className="page-header">
                 <h2>Courses</h2>
-                <button className="primary-btn" onClick={handleOpenModal}>
-                    <Plus size={16} /> Create New Course
-                </button>
+                <div className="header-actions">
+                    {courses.length > 0 && (
+                        <button className="secondary-btn" onClick={toggleSelectAll}>
+                            {selectedIds.length === courses.length ? 'Deselect All' : 'Select All'}
+                        </button>
+                    )}
+                    {selectedIds.length > 0 && (
+                        <button className="delete-btn bulk-delete" onClick={handleBulkDelete}>
+                            <Trash2 size={16} /> Delete Selected ({selectedIds.length})
+                        </button>
+                    )}
+                    <button className="primary-btn" onClick={handleOpenModal}>
+                        <Plus size={16} /> Create New Course
+                    </button>
+                </div>
             </div>
 
             <div className="page-content transparent-bg">
@@ -284,15 +334,29 @@ const Courses = () => {
                 ) : courses.length > 0 ? (
                     <div className="courses-grid">
                         {courses.map((course) => (
-                            <div className="course-card" key={course.id}>
+                            <div className={`course-card ${selectedIds.includes(course.id) ? 'selected-card' : ''}`} key={course.id} onClick={() => toggleSelect(course.id)}>
                                 <div className="course-header">
+                                    <div className="course-selection">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedIds.includes(course.id)}
+                                            onChange={(e) => {
+                                                e.stopPropagation();
+                                                toggleSelect(course.id);
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}
+                                        />
+                                    </div>
                                     <div className="course-code-row">
                                         <span className="course-code">{course.code}</span>
                                         <span className="course-dept">{course.departments?.name || 'N/A'}</span>
                                     </div>
                                     <button
                                         className="delete-btn-icon"
-                                        onClick={() => handleDelete(course.id)}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDelete(course.id);
+                                        }}
                                         title="Delete Course"
                                     >
                                         <Trash2 size={18} />
@@ -319,7 +383,10 @@ const Courses = () => {
                                     )}
                                 </div>
 
-                                <button className="start-session-btn" onClick={() => handleStartSession(course)}>
+                                <button className="start-session-btn" onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleStartSession(course);
+                                }}>
                                     <PlayCircle size={16} /> Start Class Session
                                 </button>
 

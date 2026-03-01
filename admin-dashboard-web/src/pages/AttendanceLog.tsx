@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Download, CheckCircle, Clock, Fingerprint, Lock } from 'lucide-react';
+import { Download, CheckCircle, Clock, Fingerprint, Lock, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import './AttendanceLog.css';
 
@@ -11,6 +11,8 @@ const AttendanceLog = () => {
     const [selectedCourse, setSelectedCourse] = useState('All');
     const [logs, setLogs] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [isClearing, setIsClearing] = useState(false);
 
     const [availableDepts, setAvailableDepts] = useState<string[]>(['All']);
     const [availableLevels, setAvailableLevels] = useState<string[]>(['All']);
@@ -97,7 +99,54 @@ const AttendanceLog = () => {
         const matchesLevel = selectedLevel === 'All' || log.level === selectedLevel;
         const matchesCourse = selectedCourse === 'All' || log.course_code === selectedCourse || log.status === 'Absent';
         return matchesDept && matchesLevel && matchesCourse;
-    }).sort((a, b) => {
+    });
+
+    const handleBulkClear = async () => {
+        const presentSelected = filteredLogs.filter(log => selectedIds.includes(log.id) && log.status === 'Present');
+        if (presentSelected.length === 0) {
+            alert('No "Present" records selected to clear.');
+            return;
+        }
+
+        if (window.confirm(`Are you sure you want to clear/reset attendance for ${presentSelected.length} students?`)) {
+            setIsClearing(true);
+            try {
+                const today = new Date().toISOString().split('T')[0];
+                const regsToClear = presentSelected.map(log => log.registration_number);
+
+                const { error } = await supabase
+                    .from('attendance')
+                    .delete()
+                    .eq('date', today)
+                    .in('registration_number', regsToClear);
+
+                if (error) throw error;
+
+                setSelectedIds([]);
+                fetchLogs();
+            } catch (error: any) {
+                alert(error.message || 'Failed to clear attendance records');
+            } finally {
+                setIsClearing(false);
+            }
+        }
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedIds.length === filteredLogs.length && filteredLogs.length > 0) {
+            setSelectedIds([]);
+        } else {
+            setSelectedIds(filteredLogs.map(l => l.id));
+        }
+    };
+
+    const toggleSelect = (id: string) => {
+        setSelectedIds(prev =>
+            prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+        );
+    };
+
+    const sortedLogs = [...filteredLogs].sort((a, b) => {
         if (a.status !== b.status) {
             return a.status === 'Present' ? -1 : 1;
         }
@@ -108,9 +157,16 @@ const AttendanceLog = () => {
         <div className="page-container">
             <div className="page-header">
                 <h2>Attendance Log</h2>
-                <button className="primary-btn">
-                    <Download size={16} /> Export Report
-                </button>
+                <div className="header-actions">
+                    {selectedIds.length > 0 && (
+                        <button className="delete-btn bulk-delete" onClick={handleBulkClear} disabled={isClearing}>
+                            <Trash2 size={16} /> Clear Selected ({selectedIds.length})
+                        </button>
+                    )}
+                    <button className="primary-btn">
+                        <Download size={16} /> Export Report
+                    </button>
+                </div>
             </div>
 
             <div className="page-content">
@@ -144,6 +200,13 @@ const AttendanceLog = () => {
                         <table className="data-table">
                             <thead>
                                 <tr>
+                                    <th style={{ width: '40px' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={filteredLogs.length > 0 && selectedIds.length === filteredLogs.length}
+                                            onChange={toggleSelectAll}
+                                        />
+                                    </th>
                                     <th>Student</th>
                                     <th>Date & Time</th>
                                     <th>Course</th>
@@ -152,8 +215,15 @@ const AttendanceLog = () => {
                                 </tr>
                             </thead>
                             <tbody>
-                                {filteredLogs.length > 0 ? filteredLogs.map((log) => (
-                                    <tr key={log.id}>
+                                {sortedLogs.length > 0 ? sortedLogs.map((log) => (
+                                    <tr key={log.id} className={selectedIds.includes(log.id) ? 'selected-row' : ''}>
+                                        <td>
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedIds.includes(log.id)}
+                                                onChange={() => toggleSelect(log.id)}
+                                            />
+                                        </td>
                                         <td>
                                             <p className="student-name" style={{ margin: 0 }}>{log.name}</p>
                                             <span style={{ fontSize: '11px', color: '#a0a0a0' }}>{log.registration_number}</span>
